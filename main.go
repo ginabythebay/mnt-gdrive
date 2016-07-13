@@ -155,16 +155,6 @@ type Dir struct {
 	id string
 }
 
-func (d Dir) ChildQuery(nextPageToken string) *drive.FilesListCall {
-	result := d.srv.Files.List().PageSize(PageSize).
-		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
-		Q(fmt.Sprintf("'%s' in parents", d.id))
-	if nextPageToken != "" {
-		result = result.PageToken(nextPageToken)
-	}
-	return result
-}
-
 func (Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Mode = MODE_DIR
 	return nil
@@ -192,28 +182,25 @@ func fsType(f *drive.File) fuse.DirentType {
 
 func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	result := make([]fuse.Dirent, 0)
-	r, err := d.ChildQuery("").Do()
-	if err != nil {
-		log.Print("Unable to retrieve files.", err)
-		return nil, fuse.ENODATA
-	}
 
-	for len(r.Files) > 0 {
+	handler := func(r *drive.FileList) error {
 		for _, f := range r.Files {
 			if !nameOK(f.Name) {
 				continue
 			}
 			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType(f)))
 		}
+		return nil
+	}
 
-		if r.NextPageToken == "" {
-			break
-		}
-		r, err = d.ChildQuery(r.NextPageToken).Do()
-		if err != nil {
-			log.Print("Unable to retrieve files.", err)
-			return nil, fuse.ENODATA
-		}
+	err := d.srv.Files.List().
+		PageSize(PageSize).
+		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
+		Q(fmt.Sprintf("'%s' in parents", d.id)).
+		Pages(ctx, handler)
+	if err != nil {
+		log.Print("Unable to retrieve files.", err)
+		return nil, fuse.ENODATA
 	}
 
 	return result, nil
