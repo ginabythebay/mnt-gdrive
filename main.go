@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"google.golang.org/api/drive/v3"
 
@@ -26,7 +27,12 @@ import (
 )
 
 // TODO(gina) things to address
-// . doing something with inodes will help perf?
+// . Need to support inodes.  Looks like if I populate it properly
+//   everywhere, it will disambiguate files with the same name.  my
+//   google drive is full of these.  I think that doing this will mean I
+//   need to maintain a map from inode to drive id.  Which means a
+//   file-system-global structure we pass around and mutex-mediated
+//   access to it
 // . better file modes
 // . consider readonly mounting mode.  would affect flags we return in attributes,
 //   whether we allow opens for writes, and whether we ask google for full access.
@@ -79,7 +85,7 @@ func main() {
 
 	log.Print("Entering Serve")
 
-	err = fs.Serve(c, System{srv})
+	err = fs.Serve(c, DriveWrapper{srv})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -91,24 +97,67 @@ func main() {
 	}
 }
 
-// FS implements the hello world file system.
-type System struct {
+type DriveWrapper struct {
 	srv *drive.Service
 }
 
-func (s System) Root() (fs.Node, error) {
-	return Dir{s.srv, "root"}, nil
+func (d DriveWrapper) Root() (fs.Node, error) {
+	return Dir{&System{srv: d.srv, ids: make(map[uint64]string),
+		inodes: make(map[string]uint64)}, "root"}, nil
+}
+
+// FS implements the hello world file system.
+type System struct {
+	srv *drive.Service
+
+	nextInode uint64
+
+	// maps from inode to google drive id
+	ids map[uint64]string
+	// maps from google id to inode
+	inodes map[string]uint64
+
+	mu sync.Mutex
+}
+
+func (s *System) inode(id string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	inode, present := s.inodes[id]
+	if present {
+		return inode
+	}
+
+	inode = s.nextInode
+	s.nextInode++
+
+	s.ids[inode] = id
+	s.inodes[id] = inode
+
+	return inode
+}
+
+func (s *System) id(inode uint64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id, present := s.ids[inode]
+	if present {
+		return id, nil
+	}
+	return "", fuse.ESTALE
 }
 
 // Dir implements both Node and Handle for the root directory.
 type Dir struct {
-	srv *drive.Service
-	id  string
+	*System
+	id string
 }
 
 func (d Dir) ChildQuery(nextPageToken string) *drive.FilesListCall {
 	result := d.srv.Files.List().PageSize(PageSize).
-		Fields("nextPageToken, files(id, name)").
+		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
 		Q(fmt.Sprintf("'%s' in parents", d.id))
 	if nextPageToken != "" {
 		result = result.PageToken(nextPageToken)
@@ -128,6 +177,19 @@ func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	return nil, fuse.ENOENT
 }
 
+func (d Dir) NewDirEnt(id string, name string, t fuse.DirentType) fuse.Dirent {
+	return fuse.Dirent{Inode: d.inode(id), Name: name, Type: t}
+}
+
+func fsType(f *drive.File) fuse.DirentType {
+	// see https://developers.google.com/drive/v3/web/folder
+	if f.MimeType == "application/vnd.google-apps.folder" && f.FileExtension == "" {
+		return fuse.DT_File
+	} else {
+		return fuse.DT_Dir
+	}
+}
+
 func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	result := make([]fuse.Dirent, 0)
 	r, err := d.ChildQuery("").Do()
@@ -141,8 +203,7 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			if !nameOK(f.Name) {
 				continue
 			}
-			result = append(result,
-				fuse.Dirent{Name: f.Name, Type: fuse.DT_File})
+			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType(f)))
 		}
 
 		if r.NextPageToken == "" {
