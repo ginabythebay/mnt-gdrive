@@ -196,7 +196,7 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	err := d.srv.Files.List().
 		PageSize(PageSize).
 		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
-		Q(fmt.Sprintf("'%s' in parents", d.id)).
+		Q(fmt.Sprintf("'%s' in parents and trashed = false", d.id)).
 		Pages(ctx, handler)
 	if err != nil {
 		log.Print("Unable to retrieve files.", err)
