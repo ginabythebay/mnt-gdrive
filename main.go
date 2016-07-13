@@ -45,6 +45,11 @@ func usage() {
 	flag.PrintDefaults()
 }
 
+// nameOK returns true if the name isn't likely to upset our host.
+func nameOK(name string) bool {
+	return !strings.Contains(name, "/")
+}
+
 func main() {
 	flag.Usage = usage
 	flag.Parse()
@@ -133,10 +138,11 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 	for len(r.Files) > 0 {
 		for _, f := range r.Files {
-			name := strings.Replace(f.Name, "/", "_", -1)
-			log.Print(name)
+			if !nameOK(f.Name) {
+				continue
+			}
 			result = append(result,
-				fuse.Dirent{Name: name, Type: fuse.DT_File})
+				fuse.Dirent{Name: f.Name, Type: fuse.DT_File})
 		}
 
 		if r.NextPageToken == "" {
