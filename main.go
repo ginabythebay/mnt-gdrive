@@ -25,6 +25,14 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// TODO(gina) things to address
+// . doing something with inodes will help perf?
+// . better file modes
+// . consider readonly mounting mode.  would affect flags we return in attributes,
+//   whether we allow opens for writes, and whether we ask google for full access.
+// . caching?
+// . prefetch of extra file attributes during ReadDirAll?
+
 const PageSize = 1000
 
 // TODO(gina) do something realz here
@@ -104,7 +112,6 @@ func (d Dir) ChildQuery(nextPageToken string) *drive.FilesListCall {
 }
 
 func (Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = 1
 	a.Mode = MODE_DIR
 	return nil
 }
@@ -125,11 +132,11 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 
 	for len(r.Files) > 0 {
-		for i, f := range r.Files {
+		for _, f := range r.Files {
 			name := strings.Replace(f.Name, "/", "_", -1)
 			log.Print(name)
 			result = append(result,
-				fuse.Dirent{Inode: uint64(i), Name: name, Type: fuse.DT_File})
+				fuse.Dirent{Name: name, Type: fuse.DT_File})
 		}
 
 		if r.NextPageToken == "" {
@@ -151,7 +158,6 @@ type File struct{}
 const greeting = "hello, world\n"
 
 func (File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = 2
 	a.Mode = MODE_FILE
 	a.Size = uint64(len(greeting))
 	return nil
