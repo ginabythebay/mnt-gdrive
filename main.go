@@ -166,7 +166,7 @@ type Dir struct {
 
 func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	f, err := d.srv.Files.Get(d.id).
-		Fields("createdTime, modifiedTime, size").
+		Fields("createdTime, modifiedTime, size, mimeType, fileExtension").
 		Do()
 	if err != nil {
 		log.Print("Unable to fetch dir info.", err)
@@ -188,7 +188,12 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	} else {
 		log.Printf("Error parsing mtime %#v of node %#v: %s\n", f.ModifiedTime, d.id, err)
 	}
-	a.Mode = os.ModeDir
+
+	if isDir(f) {
+		a.Mode = os.ModeDir
+	}
+	a.Mode |= 0400
+
 	return nil
 }
 
@@ -203,12 +208,12 @@ func (d Dir) NewDirEnt(id string, name string, t fuse.DirentType) fuse.Dirent {
 	return fuse.Dirent{Inode: d.getInode(id), Name: name, Type: t}
 }
 
-func fsType(f *drive.File) fuse.DirentType {
+func isDir(f *drive.File) bool {
 	// see https://developers.google.com/drive/v3/web/folder
 	if f.MimeType == "application/vnd.google-apps.folder" && f.FileExtension == "" {
-		return fuse.DT_File
+		return true
 	} else {
-		return fuse.DT_Dir
+		return false
 	}
 }
 
@@ -220,7 +225,15 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			if !nameOK(f.Name) {
 				continue
 			}
-			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType(f)))
+
+			var fsType fuse.DirentType
+			if isDir(f) {
+				fsType = fuse.DT_Dir
+			} else {
+				fsType = fuse.DT_File
+			}
+
+			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType))
 		}
 		return nil
 	}
