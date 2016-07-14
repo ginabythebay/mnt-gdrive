@@ -166,7 +166,7 @@ type Dir struct {
 
 func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	f, err := d.srv.Files.Get(d.id).
-		Fields("createdTime, modifiedTime, size, mimeType").
+		Fields("createdTime, modifiedTime, size").
 		Do()
 	if err != nil {
 		log.Print("Unable to fetch dir info.", err)
