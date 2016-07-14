@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/api/drive/v3"
 
@@ -102,8 +103,11 @@ type DriveWrapper struct {
 }
 
 func (d DriveWrapper) Root() (fs.Node, error) {
-	return Dir{&System{srv: d.srv, ids: make(map[uint64]string),
-		inodes: make(map[string]uint64)}, "root"}, nil
+	s := &System{srv: d.srv, ids: make(map[uint64]string),
+		inodes: make(map[string]uint64)}
+	id := "root"
+	n := node{s, s.getInode(id), id}
+	return Dir{&n}, nil
 }
 
 // FS implements the hello world file system.
@@ -120,7 +124,7 @@ type System struct {
 	mu sync.Mutex
 }
 
-func (s *System) inode(id string) uint64 {
+func (s *System) getInode(id string) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -138,7 +142,7 @@ func (s *System) inode(id string) uint64 {
 	return inode
 }
 
-func (s *System) id(inode uint64) (string, error) {
+func (s *System) getId(inode uint64) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -149,14 +153,42 @@ func (s *System) id(inode uint64) (string, error) {
 	return "", fuse.ESTALE
 }
 
-// Dir implements both Node and Handle for the root directory.
-type Dir struct {
+type node struct {
 	*System
-	id string
+	inode uint64
+	id    string
 }
 
-func (Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Mode = MODE_DIR
+// Dir implements both Node and Handle for the root directory.
+type Dir struct {
+	*node
+}
+
+func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
+	f, err := d.srv.Files.Get(d.id).
+		Fields("createdTime, modifiedTime, size, mimeType").
+		Do()
+	if err != nil {
+		log.Print("Unable to fetch dir info.", err)
+		return fuse.ENODATA
+	}
+
+	a.Inode = d.inode
+	a.Size = uint64(f.Size)
+	ctime, err := time.Parse(time.RFC3339, f.CreatedTime)
+	if err == nil {
+		a.Ctime = ctime
+		a.Crtime = ctime
+	} else {
+		log.Printf("Error parsing ctime %#v of node %#v: %s\n", f.CreatedTime, d.id, err)
+	}
+	mtime, err := time.Parse(time.RFC3339, f.ModifiedTime)
+	if err == nil {
+		a.Mtime = mtime
+	} else {
+		log.Printf("Error parsing mtime %#v of node %#v: %s\n", f.ModifiedTime, d.id, err)
+	}
+	a.Mode = os.ModeDir
 	return nil
 }
 
@@ -168,7 +200,7 @@ func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 }
 
 func (d Dir) NewDirEnt(id string, name string, t fuse.DirentType) fuse.Dirent {
-	return fuse.Dirent{Inode: d.inode(id), Name: name, Type: t}
+	return fuse.Dirent{Inode: d.getInode(id), Name: name, Type: t}
 }
 
 func fsType(f *drive.File) fuse.DirentType {
