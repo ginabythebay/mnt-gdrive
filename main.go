@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -40,7 +41,7 @@ import (
 // . caching?
 // . prefetch of extra file attributes during ReadDirAll?
 
-const PageSize = 1000
+const pageSize = 1000
 
 // TODO(gina) do something realz here
 const MODE_FILE = 0444
@@ -77,7 +78,7 @@ func main() {
 		fuse.FSName("mntgdrive"),
 		fuse.Subtype("mntgrdrivefs"),
 		fuse.LocalVolume(),
-		fuse.VolumeName("GDrive!"),
+		fuse.VolumeName("GDrive"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -86,7 +87,7 @@ func main() {
 
 	log.Print("Entering Serve")
 
-	err = fs.Serve(c, DriveWrapper{srv})
+	err = fs.Serve(c, driveWrapper{srv})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -98,98 +99,116 @@ func main() {
 	}
 }
 
-type DriveWrapper struct {
+type driveWrapper struct {
 	srv *drive.Service
 }
 
-func (d DriveWrapper) Root() (fs.Node, error) {
-	s := &System{srv: d.srv, ids: make(map[uint64]string),
-		inodes: make(map[string]uint64)}
-	id := "root"
-	n := node{s, s.getInode(id), id}
-	return Dir{&n}, nil
+func (d driveWrapper) Root() (fs.Node, error) {
+	g, err := fetchGnode(d.srv, "root")
+	if err != nil {
+		log.Print("Error fetching root", err)
+		return nil, fuse.ENODATA
+	}
+	s := &system{srv: d.srv, idMap: make(map[string]*node),
+		inodeMap: make(map[uint64]*node)}
+	n := s.getOrMakeNode(g)
+
+	return n, nil
 }
 
 // FS implements the hello world file system.
-type System struct {
+type system struct {
 	srv *drive.Service
+
+	// guards all of the fields below
+	mu sync.Mutex
 
 	nextInode uint64
 
-	// maps from inode to google drive id
-	ids map[uint64]string
-	// maps from google id to inode
-	inodes map[string]uint64
-
-	mu sync.Mutex
+	// maps from inode to node
+	inodeMap map[uint64]*node
+	// maps from google drive id to node
+	idMap map[string]*node
 }
 
-func (s *System) getInode(id string) uint64 {
+func (s *system) getOrMakeNode(g *gnode) *node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	inode, present := s.inodes[id]
-	if present {
-		return inode
+	n, ok := s.idMap[g.id]
+	if !ok {
+		s.nextInode++
+		inode := s.nextInode
+		pm := map[string]*node{}
+		for _, id := range g.parentIds {
+			if p, ok := s.idMap[id]; ok {
+				pm[id] = p
+			}
+		}
+		n = newNode(s, inode, g, pm)
+		s.inodeMap[inode] = n
+		s.idMap[g.id] = n
+	} else {
+		n.updateMetadata(g)
 	}
 
-	inode = s.nextInode
-	s.nextInode++
-
-	s.ids[inode] = id
-	s.inodes[id] = inode
-
-	return inode
-}
-
-func (s *System) getId(inode uint64) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	id, present := s.ids[inode]
-	if present {
-		return id, nil
-	}
-	return "", fuse.ESTALE
+	return n
 }
 
 type node struct {
-	*System
+	*system
+	// These are things we expect to be immutable for a node
 	inode uint64
 	id    string
+
+	//
+	// These can change while a node exists
+	//
+
+	// directly retrieved metadata
+
+	// guards this access to this group
+	mu      sync.Mutex
+	name    string
+	ctime   time.Time
+	mtime   time.Time
+	size    uint64
+	version int64
+	dir     bool
+	parents map[string]*node
+
+	// guards children
+	cmu sync.Mutex
+	// if nil, we don't yet have children information
+	children map[string]*node
 }
 
-// Dir implements both Node and Handle for the root directory.
-type Dir struct {
-	*node
+func newNode(s *system, inode uint64, g *gnode, parents map[string]*node) *node {
+	return &node{system: s, inode: inode, id: g.id, name: g.name, ctime: g.ctime, mtime: g.mtime, size: g.size, version: g.version, dir: g.dir(), parents: parents}
+
 }
 
-func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	f, err := d.srv.Files.Get(d.id).
-		Fields("createdTime, modifiedTime, size, mimeType, fileExtension").
-		Do()
-	if err != nil {
-		log.Print("Unable to fetch dir info.", err)
-		return fuse.ENODATA
-	}
+func (*node) updateMetadata(g *gnode) {
+	log.Fatalf("implement updateMetadata: %#v", g)
+	// locking
+	// update main metadata
 
-	a.Inode = d.inode
-	a.Size = uint64(f.Size)
-	ctime, err := time.Parse(time.RFC3339, f.CreatedTime)
-	if err == nil {
-		a.Ctime = ctime
-		a.Crtime = ctime
-	} else {
-		log.Printf("Error parsing ctime %#v of node %#v: %s\n", f.CreatedTime, d.id, err)
-	}
-	mtime, err := time.Parse(time.RFC3339, f.ModifiedTime)
-	if err == nil {
-		a.Mtime = mtime
-	} else {
-		log.Printf("Error parsing mtime %#v of node %#v: %s\n", f.ModifiedTime, d.id, err)
-	}
+	// parents
+	// first go through existing parents and remove us as children
+	// add ourselves as a child to the new set of parents
+	// record our parents
+}
 
-	if isDir(f) {
+func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	a.Inode = n.inode
+	a.Size = n.size
+	a.Ctime = n.ctime
+	a.Crtime = n.ctime
+	a.Mtime = n.mtime
+
+	if n.dir {
 		a.Mode = os.ModeDir
 	}
 	a.Mode |= 0400
@@ -197,59 +216,116 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	return nil
 }
 
-func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	if name == "hello" {
-		return File{}, nil
-	}
-	return nil, fuse.ENOENT
-}
-
-func (d Dir) NewDirEnt(id string, name string, t fuse.DirentType) fuse.Dirent {
-	return fuse.Dirent{Inode: d.getInode(id), Name: name, Type: t}
-}
-
-func isDir(f *drive.File) bool {
-	// see https://developers.google.com/drive/v3/web/folder
-	if f.MimeType == "application/vnd.google-apps.folder" && f.FileExtension == "" {
-		return true
-	} else {
-		return false
-	}
-}
-
-func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	result := make([]fuse.Dirent, 0)
-
-	handler := func(r *drive.FileList) error {
-		for _, f := range r.Files {
-			if !nameOK(f.Name) {
-				continue
-			}
-
-			var fsType fuse.DirentType
-			if isDir(f) {
-				fsType = fuse.DT_Dir
-			} else {
-				fsType = fuse.DT_File
-			}
-
-			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType))
-		}
+func (n *node) loadChildrenIfEmpty(ctx context.Context) error {
+	n.cmu.Lock()
+	loaded := n.children != nil
+	n.cmu.Unlock()
+	if loaded {
 		return nil
 	}
 
-	err := d.srv.Files.List().
-		PageSize(PageSize).
-		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
-		Q(fmt.Sprintf("'%s' in parents and trashed = false", d.id)).
-		Pages(ctx, handler)
+	gs, err := fetchGnodeChildren(ctx, n.srv, n.id)
 	if err != nil {
-		log.Print("Unable to retrieve files.", err)
-		return nil, fuse.ENODATA
+		return err
 	}
 
-	return result, nil
+	var children []*node
+	for _, g := range gs {
+		// Note inside this loop we are aquiring and releasing a lock over and over.  I don't know if that is bad yet.
+		c := n.getOrMakeNode(g)
+		c.addParent(n)
+		children = append(children, c)
+	}
+
+	childMap := map[string]*node{}
+	for _, c := range children {
+		childMap[c.id] = c
+	}
+
+	n.cmu.Lock()
+	n.children = childMap
+	n.cmu.Unlock()
+	return nil
 }
+
+func (n *node) addParent(p *node) {
+	n.mu.Lock()
+	n.parents[p.id] = p
+	n.mu.Unlock()
+}
+
+func (n *node) ReadDirAll(ctx context.Context) (ds []fuse.Dirent, err error) {
+	if err = n.loadChildrenIfEmpty(ctx); err != nil {
+		log.Printf("Unable to retrieve children of %v due to %s", n.id, err)
+		return nil, fuse.EIO
+	}
+
+	n.cmu.Lock()
+	defer n.cmu.Unlock()
+	for _, c := range n.children {
+		var dt fuse.DirentType
+		if c.dir {
+			dt = fuse.DT_Dir
+		} else {
+			dt = fuse.DT_File
+		}
+
+		ds = append(ds, fuse.Dirent{c.inode, dt, c.name})
+	}
+
+	log.Printf("ReadDirAll returning %d children", len(ds))
+	return ds, nil
+}
+
+// // Dir implements both Node and Handle for the root directory.
+// type Dir struct {
+// 	*node
+// }
+
+// func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
+// 	if name == "hello" {
+// 		return File{}, nil
+// 	}
+// 	return nil, fuse.ENOENT
+// }
+
+// func (d Dir) NewDirEnt(id string, name string, t fuse.DirentType) fuse.Dirent {
+// 	return fuse.Dirent{Inode: d.getInode(id), Name: name, Type: t}
+// }
+
+// func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+// 	result := make([]fuse.Dirent, 0)
+
+// 	handler := func(r *drive.FileList) error {
+// 		for _, f := range r.Files {
+// 			if !nameOK(f.Name) {
+// 				continue
+// 			}
+
+// 			var fsType fuse.DirentType
+// 			if isDir(f) {
+// 				fsType = fuse.DT_Dir
+// 			} else {
+// 				fsType = fuse.DT_File
+// 			}
+
+// 			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType))
+// 		}
+// 		return nil
+// 	}
+
+// 	err := d.srv.Files.List().
+// 		PageSize(pageSize).
+// 		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
+// 		Q(fmt.Sprintf("'%s' in parents and trashed = false", d.id)).
+// 		Pages(ctx, handler)
+// 	if err != nil {
+// 		log.Print("Unable to retrieve files.", err)
+// 		return nil, fuse.ENODATA
+// 	}
+
+// 	return result, nil
+// }
 
 // File implements both Node and Handle for the hello file.
 type File struct{}
@@ -360,4 +436,102 @@ func saveToken(file string, token *oauth2.Token) {
 	}
 	defer f.Close()
 	json.NewEncoder(f).Encode(token)
+}
+
+// gnode represents raw metadata about a file or directory that came from google drive.
+// Mostly a simple data-holder
+type gnode struct {
+	// should never change
+	id string
+
+	name      string
+	ctime     time.Time
+	mtime     time.Time
+	size      uint64
+	version   int64
+	parentIds []string
+	trashed   bool
+
+	// We use these to determine if it is a folder
+	fileExtension string
+	mimeType      string
+}
+
+func makeGnode(id string, f *drive.File) (*gnode, error) {
+	var ctime time.Time
+	ctime, err := time.Parse(time.RFC3339, f.CreatedTime)
+	if err != nil {
+		log.Printf("Error parsing ctime %#v of node %#v: %s\n", f.CreatedTime, id, err)
+		return nil, fuse.ENODATA
+	}
+
+	var mtime time.Time
+	mtime, err = time.Parse(time.RFC3339, f.ModifiedTime)
+	if err != nil {
+		log.Printf("Error parsing mtime %#v of node %#v: %s\n", f.ModifiedTime, id, err)
+		return nil, fuse.ENODATA
+	}
+
+	return &gnode{id,
+		f.Name,
+		ctime,
+		mtime,
+		uint64(f.Size),
+		f.Version,
+		f.Parents,
+		f.Trashed,
+		f.FileExtension,
+		f.MimeType}, nil
+}
+
+var fileFields googleapi.Field = "id, name, createdTime, modifiedTime, size, version, parents, fileExtension, mimeType, trashed"
+var childFields = "nextPageToken, files(" + fileFields + ")"
+
+func fetchGnode(srv *drive.Service, id string) (g *gnode, err error) {
+	f, err := srv.Files.Get(id).
+		Fields(fileFields).
+		Do()
+	if err != nil {
+		log.Print("Unable to fetch dir info.", err)
+		return nil, fuse.ENODATA
+	}
+	if !nameOK(f.Name) || f.Trashed {
+		return nil, fuse.ENODATA
+	}
+
+	return makeGnode(id, f)
+}
+
+func fetchGnodeChildren(ctx context.Context, srv *drive.Service, id string) (gs []*gnode, err error) {
+	handler := func(r *drive.FileList) error {
+		for _, f := range r.Files {
+			if !nameOK(f.Name) {
+				continue
+			}
+			// if there was an error in makeGnode, we logged it and we will just skip it here
+			if g, err := makeGnode(f.Id, f); err == nil {
+				gs = append(gs, g)
+			}
+		}
+		return nil
+	}
+
+	err = srv.Files.List().
+		PageSize(pageSize).
+		Fields(childFields).
+		Q(fmt.Sprintf("'%s' in parents and trashed = false", id)).
+		Pages(ctx, handler)
+	if err != nil {
+		log.Print("Unable to retrieve files.", err)
+		return nil, fuse.ENODATA
+	}
+	return gs, nil
+}
+
+func (g *gnode) dir() bool {
+	// see https://developers.google.com/drive/v3/web/folder
+	if g.mimeType == "application/vnd.google-apps.folder" && g.fileExtension == "" {
+		return true
+	}
+	return false
 }
