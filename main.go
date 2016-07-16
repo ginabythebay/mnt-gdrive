@@ -209,9 +209,10 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Mtime = n.mtime
 
 	if n.dir {
-		a.Mode = os.ModeDir
+		a.Mode = MODE_DIR
+	} else {
+		a.Mode = MODE_FILE
 	}
-	a.Mode |= 0400
 
 	return nil
 }
@@ -255,12 +256,8 @@ func (n *node) addParent(p *node) {
 }
 
 func (n *node) ReadDirAll(ctx context.Context) (ds []fuse.Dirent, err error) {
-	if !n.dir {
-		return nil, fuse.ESTALE
-	}
 	if err = n.loadChildrenIfEmpty(ctx); err != nil {
-		log.Printf("Unable to retrieve children of %v due to %s", n.id, err)
-		return nil, fuse.EIO
+		return nil, err
 	}
 
 	n.cmu.Lock()
@@ -280,69 +277,47 @@ func (n *node) ReadDirAll(ctx context.Context) (ds []fuse.Dirent, err error) {
 	return ds, nil
 }
 
-// // Dir implements both Node and Handle for the root directory.
-// type Dir struct {
-// 	*node
-// }
+func (n *node) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+		return nil, err
+	}
 
-// func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-// 	if name == "hello" {
-// 		return File{}, nil
-// 	}
-// 	return nil, fuse.ENOENT
-// }
-
-// func (d Dir) NewDirEnt(id string, name string, t fuse.DirentType) fuse.Dirent {
-// 	return fuse.Dirent{Inode: d.getInode(id), Name: name, Type: t}
-// }
-
-// func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-// 	result := make([]fuse.Dirent, 0)
-
-// 	handler := func(r *drive.FileList) error {
-// 		for _, f := range r.Files {
-// 			if !nameOK(f.Name) {
-// 				continue
-// 			}
-
-// 			var fsType fuse.DirentType
-// 			if isDir(f) {
-// 				fsType = fuse.DT_Dir
-// 			} else {
-// 				fsType = fuse.DT_File
-// 			}
-
-// 			result = append(result, d.NewDirEnt(f.Id, f.Name, fsType))
-// 		}
-// 		return nil
-// 	}
-
-// 	err := d.srv.Files.List().
-// 		PageSize(pageSize).
-// 		Fields("nextPageToken, files(id, name, fileExtension, mimeType)").
-// 		Q(fmt.Sprintf("'%s' in parents and trashed = false", d.id)).
-// 		Pages(ctx, handler)
-// 	if err != nil {
-// 		log.Print("Unable to retrieve files.", err)
-// 		return nil, fuse.ENODATA
-// 	}
-
-// 	return result, nil
-// }
-
-// File implements both Node and Handle for the hello file.
-type File struct{}
-
-const greeting = "hello, world\n"
-
-func (File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Mode = MODE_FILE
-	a.Size = uint64(len(greeting))
-	return nil
+	n.cmu.Lock()
+	defer n.cmu.Unlock()
+	for _, c := range n.children {
+		if c.name == name {
+			return c, nil
+		}
+	}
+	return nil, fuse.ENOENT
 }
 
-func (File) ReadAll(ctx context.Context) ([]byte, error) {
-	return []byte(greeting), nil
+func (n *node) ReadAll(ctx context.Context) (result []byte, err error) {
+	start := time.Now()
+	n.mu.Lock()
+	dir := n.dir
+	size := n.size
+	id := n.id
+	n.mu.Unlock()
+
+	if dir {
+		return nil, fuse.ENOTSUP
+	}
+	if size == 0 {
+		return []byte{}, nil
+	}
+
+	resp, err := n.srv.Files.Get(id).Download()
+	defer resp.Body.Close()
+	defer func() {
+		log.Printf("reading %d bytes took %s", len(result), time.Since(start))
+	}()
+	if err != nil {
+		log.Print("Unable to download.", err)
+		return nil, fuse.ENODATA
+	}
+
+	return ioutil.ReadAll(resp.Body)
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -495,7 +470,7 @@ func fetchGnode(srv *drive.Service, id string) (g *gnode, err error) {
 		Fields(fileFields).
 		Do()
 	if err != nil {
-		log.Print("Unable to fetch dir info.", err)
+		log.Print("Unable to fetch node info.", err)
 		return nil, fuse.ENODATA
 	}
 	if !nameOK(f.Name) || f.Trashed {
