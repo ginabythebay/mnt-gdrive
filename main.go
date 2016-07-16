@@ -255,6 +255,9 @@ func (n *node) addParent(p *node) {
 }
 
 func (n *node) ReadDirAll(ctx context.Context) (ds []fuse.Dirent, err error) {
+	if !n.dir {
+		return nil, fuse.ESTALE
+	}
 	if err = n.loadChildrenIfEmpty(ctx); err != nil {
 		log.Printf("Unable to retrieve children of %v due to %s", n.id, err)
 		return nil, fuse.EIO
