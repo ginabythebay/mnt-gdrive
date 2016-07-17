@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -626,7 +627,13 @@ func (d *dumpNodeType) ReadAll(ctx context.Context) (result []byte, err error) {
 func getDriveService() (*drive.Service, error) {
 	ctx := context.Background()
 
-	b, err := ioutil.ReadFile("client_secret.json")
+	usr, err := user.Current()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to determine home directory: %v", err)
+	}
+
+	secretFile := path.Join(usr.HomeDir, ".config", "mnt-gdrive", "client_secret.json")
+	b, err := ioutil.ReadFile(secretFile)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to read client secret file: %v", err)
 	}
