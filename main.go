@@ -28,19 +28,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// TODO(gina) things to address
-// . Need to support inodes.  Looks like if I populate it properly
-//   everywhere, it will disambiguate files with the same name.  my
-//   google drive is full of these.  I think that doing this will mean I
-//   need to maintain a map from inode to drive id.  Which means a
-//   file-system-global structure we pass around and mutex-mediated
-//   access to it
-// . better file modes
-// . consider readonly mounting mode.  would affect flags we return in attributes,
-//   whether we allow opens for writes, and whether we ask google for full access.
-// . caching?
-// . prefetch of extra file attributes during ReadDirAll?
-
 const pageSize = 1000
 
 const (

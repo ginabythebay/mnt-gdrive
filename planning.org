@@ -1,0 +1,21 @@
+
+
+* Things to work on next
+** Make the repo public
+   . Move credentials file somewhere else
+   . document how to get started with this thing
+** Understand kernel caching and how to work with it.
+   . I think the kernel can cache (and even prefetch) content.  How do I take advantage of that?
+
+   . How do I then notify the kernel of changes that happen so it can invalidate?
+
+   . Also, can we automatically notify the system of changes so uis can magically update?  See https://github.com/camlistore/camlistore/issues/244
+** I'm locking upward on writes and basically not locking properly when going downward on dump.  fix that.
+
+* Things to work on at some point
+** Umm, write mode
+** Can we reduce change notification spam by filtering out fields we don't care about?
+** Allow live configuration via writing to a magic file?  Could turn on and off logging etc.
+** Do something useful with file modes
+** Have some kind of /recent directory with symlinks to the actual nodes
+** Track last-read-time of nodes, evict old ones to save memory
