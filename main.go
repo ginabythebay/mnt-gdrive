@@ -31,30 +31,37 @@ import (
 const pageSize = 1000
 
 const (
-	reservedInode = iota
-	dumpInode
-	firstDynamicInode
+	// Not sure if something in the kernel or fuse might get upset by a zero value, so we
+	// skip past it.
+	reservedIdx = iota
+
+	// Group of special fixed indices for 'magic' files that aren't part of gdrive and a
+	// therefore outside of our normal allocation mechanism.
+	dumpIdx
+
+	// Where we start allocating indices for gdrive files
+	firstDynamicIdx
 )
 
 // TODO(gina) do something realz here
 const MODE_FILE = 0444
 const MODE_DIR = os.ModeDir | 0555
 
-const fileFields = "id, name, createdTime, modifiedTime, size, version, parents, fileExtension, mimeType, trashed"
+const fileFields = "id, name, ownedByMe, createdTime, modifiedTime, size, version, parents, fileExtension, mimeType, trashed"
 const fileGroupFields = "nextPageToken, files(" + fileFields + ")"
 
 // TODO(gina) make this configurable
 const changeFetchSleep = time.Duration(5) * time.Second
 
+// The handle that the kernel expects to use when identifying files and directories.  The
+// kernel often calls this inode.  But it also uses inode but since inode is also used to
+// refer to the struct that many filesystems use, that seems confusing.
+type index uint64
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT\n", os.Args[0])
 	flag.PrintDefaults()
-}
-
-// nameOK returns true if the name isn't likely to upset our host.
-func nameOK(name string) bool {
-	return !strings.Contains(name, "/")
 }
 
 func main() {
@@ -117,11 +124,11 @@ func (d driveWrapper) Root() (fs.Node, error) {
 	s := &system{
 		srv:          d.srv,
 		changesToken: token.StartPageToken,
-		nextInode:    firstDynamicInode,
+		nextInode:    firstDynamicIdx,
 		serverStart:  time.Now(),
 		updateTime:   time.Now(),
 		idMap:        make(map[string]*node),
-		inodeMap:     make(map[uint64]*node)}
+		inodeMap:     make(map[index]*node)}
 
 	root := s.getOrMakeNode(g)
 
@@ -140,15 +147,15 @@ type system struct {
 	// guards all of the fields below
 	mu sync.Mutex
 
-	nextInode uint64
+	nextInode index
 
 	serverStart time.Time
 	updateTime  time.Time
 
-	// maps from inode to node
-	inodeMap map[uint64]*node
 	// maps from google drive id to node
 	idMap map[string]*node
+	// maps from inode number to node
+	inodeMap map[index]*node
 
 	initDumpOnce sync.Once
 	dumpNode     *dumpNodeType
@@ -187,7 +194,9 @@ func (s *system) watchForChanges() {
 			}
 			pageToken = cl.NextPageToken
 		}
-		log.Printf("Successfully applied %d changes", count)
+		if count > 0 {
+			log.Printf("Successfully applied %d changes", count)
+		}
 	}
 }
 
@@ -211,10 +220,16 @@ func (s *system) processChange(c *drive.Change) {
 	// above while holding the system lock that might be untrue by the time we execute
 	// things below.
 	//
-	// If I hold onto the system lock, I need rework the code below to make sure it doesn't try to grab it if called from this call path.
+	// If I hold onto the system lock, I need rework the code below to make sure it
+	// doesn't try to grab it if called from this call path.
 
 	switch {
 	case trash:
+		s.removeNode(n)
+		log.Printf("Removed %s", c.FileId)
+	case nodeExists && !includeFile(c.File):
+		// This can happen if a file got renamed to contain a slash, or if it was owned
+		// by the user but is now not
 		s.removeNode(n)
 		log.Printf("Removed %s", c.FileId)
 	case nodeExists:
@@ -250,7 +265,7 @@ func (s *system) processChange(c *drive.Change) {
 func (s *system) removeNode(n *node) {
 	s.mu.Lock()
 	delete(s.idMap, n.id)
-	delete(s.inodeMap, n.inode)
+	delete(s.inodeMap, n.idx)
 	s.updateTime = time.Now()
 	s.mu.Unlock()
 
@@ -310,8 +325,8 @@ func (s *system) getOrMakeNode(g *gnode) *node {
 type node struct {
 	*system
 	// These are things we expect to be immutable for a node
-	inode uint64
-	id    string
+	idx index
+	id  string
 
 	//
 	// These can change while a node exists
@@ -335,15 +350,15 @@ type node struct {
 	children map[string]*node
 }
 
-func newNode(s *system, inode uint64, g *gnode, parents map[string]*node) *node {
-	return &node{system: s, inode: inode, id: g.id, name: g.name, ctime: g.ctime, mtime: g.mtime, size: g.size, version: g.version, dir: g.dir(), parents: parents}
+func newNode(s *system, idx index, g *gnode, parents map[string]*node) *node {
+	return &node{system: s, idx: idx, id: g.id, name: g.name, ctime: g.ctime, mtime: g.mtime, size: g.size, version: g.version, dir: g.dir(), parents: parents}
 
 }
 
 type printableNode struct {
 	name    string
 	dir     bool
-	inode   uint64
+	idx     index
 	id      string
 	ctime   time.Time
 	mtime   time.Time
@@ -358,7 +373,7 @@ func (n *node) dump(b *bytes.Buffer, level int) {
 	b.WriteString(margin)
 
 	n.mu.Lock()
-	p := printableNode{n.name, n.dir, n.inode, n.id, n.ctime, n.mtime, n.size, n.version}
+	p := printableNode{n.name, n.dir, n.idx, n.id, n.ctime, n.mtime, n.size, n.version}
 	n.mu.Unlock()
 	b.WriteString(fmt.Sprintf("%#v\n", p))
 	if p.dir {
@@ -438,7 +453,7 @@ func (n *node) removeChild(id string) {
 func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	a.Inode = n.inode
+	a.Inode = uint64(n.idx)
 	a.Size = n.size
 	a.Ctime = n.ctime
 	a.Crtime = n.ctime
@@ -516,7 +531,7 @@ func (n *node) ReadDirAll(ctx context.Context) (ds []fuse.Dirent, err error) {
 			dt = fuse.DT_File
 		}
 
-		ds = append(ds, fuse.Dirent{c.inode, dt, c.name})
+		ds = append(ds, fuse.Dirent{uint64(c.idx), dt, c.name})
 	}
 
 	log.Printf("ReadDirAll returning %d children", len(ds))
@@ -586,7 +601,7 @@ func (d *dumpNodeType) text() string {
 }
 
 func (d *dumpNodeType) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = dumpInode
+	a.Inode = dumpIdx
 	a.Size = uint64(len(d.text()))
 	a.Mode = MODE_FILE
 
@@ -753,7 +768,7 @@ func fetchGnode(srv *drive.Service, id string) (g *gnode, err error) {
 		log.Print("Unable to fetch node info.", err)
 		return nil, fuse.ENODATA
 	}
-	if !nameOK(f.Name) || f.Trashed {
+	if !includeFile(f) || f.Trashed {
 		return nil, fuse.ENODATA
 	}
 
@@ -763,11 +778,11 @@ func fetchGnode(srv *drive.Service, id string) (g *gnode, err error) {
 func fetchGnodeChildren(ctx context.Context, srv *drive.Service, id string) (gs []*gnode, err error) {
 	handler := func(r *drive.FileList) error {
 		for _, f := range r.Files {
-			if !nameOK(f.Name) {
+			if !includeFile(f) {
 				continue
 			}
 			// if there was an error in makeGnode, we logged it and we will just skip it here
-			if g, err := makeGnode(f.Id, f); err == nil {
+			if g, _ := makeGnode(f.Id, f); err == nil {
 				gs = append(gs, g)
 			}
 		}
@@ -796,4 +811,10 @@ func (g *gnode) dir() bool {
 		return true
 	}
 	return false
+}
+
+// includeFile decides if we want to to include the gdrive file in our system
+func includeFile(f *drive.File) bool {
+	// TODO(gina) make the OwnedByMe check configurable
+	return !strings.Contains(f.Name, "/") && f.OwnedByMe
 }

@@ -1,9 +1,10 @@
 
 
 * Things to work on next
+** Don't include files/dirs belonging to others
 ** Make the repo public
    . Figure out the discconnect between the fact that gdrive names its files directly and posix separates inodes from names, allowing for symlinks and hardlinks
-   . Move credentials file somewhere else
+   . Move client json file somewhere else
    . document how to get started with this thing
    . looks like I deleted the code that directs the user to point their browser at a url to get a credential.  put it back
 ** Understand kernel caching and how to work with it.
@@ -13,7 +14,7 @@
 
    . Also, can we automatically notify the system of changes so uis can magically update?  See https://github.com/camlistore/camlistore/issues/244
 ** I'm locking upward on writes and basically not locking properly when going downward on dump.  fix that.
-
+ 
 * Things to work on at some point
 ** consider tracking last-viewed time as attr atime
 ** Umm, write mode
