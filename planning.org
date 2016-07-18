@@ -1,7 +1,14 @@
 
 
 * Things to work on next
-** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  what the hell?
+** Leverage fuse.Debug but connecting things up in config.
+** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  I see that .dump conains reasonable stuff.  I think this is happening:
+
+   . I return 2 correct direntry elements
+   . Lookup gets called twice, based on name only
+   . Each time I just grab the first entry and return that as a result of the Lookup call, so it ends up with the same Inode
+   . I wonder what happens if I just don't implement Lookup.  It doesn't make sense if a directory can contain two files with the same name
+
 ** Make the repo public
    . Figure out the discconnect between the fact that gdrive names its files directly and posix separates inodes from names, allowing for symlinks and hardlinks
    . Move client json file somewhere else
