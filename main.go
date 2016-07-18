@@ -768,7 +768,7 @@ func makeGnode(id string, f *drive.File) (*gnode, error) {
 	}
 
 	return &gnode{id,
-		f.,
+		f.Name,
 		ctime,
 		mtime,
 		uint64(f.Size),
