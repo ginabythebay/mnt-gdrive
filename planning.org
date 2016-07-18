@@ -1,10 +1,6 @@
 
 
 * Things to work on next
-
-** Make the repo public
-   . Figure out the discconnect between the fact that gdrive names its files directly and posix separates inodes from names, allowing for symlinks and hardlinks
-   . document how to get started with this thing
 ** Understand kernel caching and how to work with it.
    . I think the kernel can cache (and even prefetch) content.  How do I take advantage of that?
 
