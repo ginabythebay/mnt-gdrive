@@ -1,7 +1,7 @@
 
 
 * Things to work on next
-** Don't include files/dirs belonging to others
+** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  what the hell?
 ** Make the repo public
    . Figure out the discconnect between the fact that gdrive names its files directly and posix separates inodes from names, allowing for symlinks and hardlinks
    . Move client json file somewhere else
