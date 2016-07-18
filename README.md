@@ -29,8 +29,8 @@ You will see various things appearing on stdout as it runs.
 
 ### node
 
-The central data structure is `node` which corresponds to a (Google
-Drive File)[https://developers.google.com/drive/v3/reference/files].
+The central data structure is `node` which corresponds to a [Google
+Drive File](https://developers.google.com/drive/v3/reference/files).
 This can be either a directory or a file, as far as the kernel is
 concerned.
 
@@ -48,8 +48,7 @@ locks for the associated parents.
 ### Memory Management
 
 We load nodes from google drive on demand.  We keep them up to date by
-polling the (Google Drive Change
-API)[https://developers.google.com/drive/v3/reference/changes].  This
+polling the [Google Drive Change API](https://developers.google.com/drive/v3/reference/changes).  This
 asynchronous polling means that we never have to wait on network
 activity to return information about a node once it has been loaded
 but also means that we have constant background network activity even
@@ -77,9 +76,9 @@ to do dynamically change e.g. logging behavior.
 
 ## Links
 
-  * (planning.org)[planning.org] contains a semi-truthful plan
-  * (Bazil FUSE)[https://bazil.org/fuse/] is a library we leverage
+  * [planning.org](planning.org) contains a semi-truthful plan
+  * [Bazil FUSE](https://bazil.org/fuse/) is a library we leverage
     heavily
-  * (Google Drive
-    API)[https://developers.google.com/drive/v3/web/about-sdk] is how
+  * [Google Drive
+    API](https://developers.google.com/drive/v3/web/about-sdk) is how
     we interact with Google Drive
