@@ -1,19 +1,10 @@
 
 
 * Things to work on next
-** Leverage fuse.Debug but connecting things up in config.
-** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  I see that .dump conains reasonable stuff.  I think this is happening:
-
-   . I return 2 correct direntry elements
-   . Lookup gets called twice, based on name only
-   . Each time I just grab the first entry and return that as a result of the Lookup call, so it ends up with the same Inode
-   . I wonder what happens if I just don't implement Lookup.  It doesn't make sense if a directory can contain two files with the same name
 
 ** Make the repo public
    . Figure out the discconnect between the fact that gdrive names its files directly and posix separates inodes from names, allowing for symlinks and hardlinks
-   . Move client json file somewhere else
    . document how to get started with this thing
-   . looks like I deleted the code that directs the user to point their browser at a url to get a credential.  put it back
 ** Understand kernel caching and how to work with it.
    . I think the kernel can cache (and even prefetch) content.  How do I take advantage of that?
 
@@ -21,8 +12,42 @@
 
    . Also, can we automatically notify the system of changes so uis can magically update?  See https://github.com/camlistore/camlistore/issues/244
 ** I'm locking upward on writes and basically not locking properly when going downward on dump.  fix that.
- 
 * Things to work on at some point
+** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  I see that .dump conains reasonable stuff.  I think this is happening:
+
+   . I return 2 correct direntry elements
+   . Lookup gets called twice, based on name only
+   . Each time I just grab the first entry and return that as a result of the Lookup call, so it ends up with the same Inode
+   . I wonder what happens if I just don't implement Lookup.  It doesn't make sense if a directory can contain two files with the same name
+
+   So this does appear to be the problem, and if I don't implement
+   Lookup, then things won't work.
+
+   I'm now thinking about forcing the files to have unique names
+   within a directory.  Sticking .<idx> or .<creationdate> at the end
+   would be one way to handle it.  Note that this could result in a
+   new name collision which I would then have to handle, as unlikely
+   as that is.
+
+   I would need to make sure I don't end up writing this fake name
+   back to gdrive by accident.
+
+   Also, when new files appear, they can cause collisions.  In that
+   case can I reliably apply the new suffix to just the new children?
+   It will be confusing if an existing file is now renamed for no
+   reason.
+
+   I could add a data structure to each directory to track nodes per
+   name to aid in this.
+
+   We need to deal with these display names both when they come into
+   use (e.g. Lookup) and we we return things (e.g. ReadDirAll, Attr).
+
+   It seems like it would we want the parent to notice every time a
+   new duplicate appears (or an old one goes away)?  When a new one
+   appears, we would walk the duplicate children, and tell each of
+   them they have a new unique display name they will use from then
+   on.
 ** consider tracking last-viewed time as attr atime
 ** Umm, write mode
 ** Can we reduce change notification spam by filtering out fields we don't care about?

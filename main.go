@@ -94,7 +94,17 @@ func main() {
 
 	log.Print("Entering Serve")
 
-	err = fs.Serve(c, driveWrapper{srv})
+	config := fs.Config{
+		Debug: func(msg interface{}) {
+			log.Print(msg)
+		},
+		WithContext: func(ctx context.Context, req fuse.Request) context.Context {
+			return ctx
+		},
+	}
+
+	server := fs.New(c, &config)
+	err = server.Serve(driveWrapper{srv})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -291,6 +301,8 @@ func (s *system) getNodeIfExists(id string) *node {
 	return n
 }
 
+// TODO(gina) I think it would make sense to have this instead return a tuple of
+// (*node, idx) where if *node is nil, then the idx will be the value to assign to a new node.
 func (s *system) getOrMakeNode(g *gnode) *node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -539,7 +551,7 @@ func (n *node) ReadDirAll(ctx context.Context) (ds []fuse.Dirent, err error) {
 	return ds, nil
 }
 
-func (n *node) Lookup(ctx context.Context, name string) (fs.Node, error) {
+func (n *node) Lookup(ctx context.Context, name string) (ret fs.Node, err error) {
 	if err := n.loadChildrenIfEmpty(ctx); err != nil {
 		return nil, err
 	}
@@ -756,7 +768,7 @@ func makeGnode(id string, f *drive.File) (*gnode, error) {
 	}
 
 	return &gnode{id,
-		f.Name,
+		f.,
 		ctime,
 		mtime,
 		uint64(f.Size),
