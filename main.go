@@ -678,36 +678,6 @@ func (r *fileReader) Release(ctx context.Context, req *fuse.ReleaseRequest) erro
 	return err
 }
 
-func (n *node) ReadAll(ctx context.Context) (result []byte, err error) {
-	start := time.Now()
-	n.mu.Lock()
-	dir := n.dir
-	size := n.size
-	id := n.id
-	n.mu.Unlock()
-
-	if dir {
-		return nil, fuse.ENOTSUP
-	}
-	if size == 0 {
-		return []byte{}, nil
-	}
-
-	resp, err := n.gdriveService.Files.Get(id).Download()
-	defer resp.Body.Close()
-	defer func() {
-		log.Printf("reading %d bytes took %s", len(result), time.Since(start))
-	}()
-	if err != nil {
-		log.Print("Unable to download.", err)
-		return nil, fuse.ENODATA
-	}
-
-	// TODO(gina) better to process this in chunks, paying attention to whether ctx is canceled.
-	// even better to instead support
-	return ioutil.ReadAll(resp.Body)
-}
-
 type dumpNodeType struct {
 	root *node
 }

@@ -1,6 +1,18 @@
 
 
 * Things to work on next
+** Extract out gdrive stuff
+  * Code will be cleaner if this has its own file
+  * If I do it right, it should be easier to test the other code took
+
+functionality I need
+  * Init
+  * get (changes) start page token
+  * get a batch of changes to process
+  * fetch gnode by id
+  * fetch gnode children
+  * download gnode content to a temp file
+
 ** I'm locking upward on writes and basically not locking properly when going downward on dump.  fix that.
 * Things to work on at some point
 ** Investigate inotify support
