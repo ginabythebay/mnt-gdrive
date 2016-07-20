@@ -9,6 +9,10 @@ functionality I need
   * Init
   * get (changes) start page token
   * get a batch of changes to process
+    For this, we might use closures:
+    http://stackoverflow.com/questions/14000534/what-is-most-idiomatic-way-to-create-an-iterator-in-go
+    Or we might expect the caller to pass in a func that gets caller
+    per change.
   * fetch gnode by id
   * fetch gnode children
   * download gnode content to a temp file
