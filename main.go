@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"google.golang.org/api/drive/v3"
@@ -75,7 +77,7 @@ func main() {
 	}
 	mountpoint := flag.Arg(0)
 
-	srv, err := getDriveService()
+	gdriveService, err := getDriveService()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,7 +106,7 @@ func main() {
 	}
 
 	server := fs.New(c, &config)
-	err = server.Serve(driveWrapper{srv})
+	err = server.Serve(wrapper{gdriveService, server})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -116,30 +118,32 @@ func main() {
 	}
 }
 
-type driveWrapper struct {
-	srv *drive.Service
+type wrapper struct {
+	gdriveService *drive.Service
+	server        *fs.Server
 }
 
-func (d driveWrapper) Root() (fs.Node, error) {
-	token, err := d.srv.Changes.GetStartPageToken().Do()
+func (w wrapper) Root() (fs.Node, error) {
+	token, err := w.gdriveService.Changes.GetStartPageToken().Do()
 	if err != nil {
 		log.Fatalf("Unable to fetch startPageToken, %q", err)
 	}
 
-	g, err := fetchGnode(d.srv, "root")
+	g, err := fetchGnode(w.gdriveService, "root")
 	if err != nil {
 		log.Print("Error fetching root", err)
 		return nil, fuse.ENODATA
 	}
 
 	s := &system{
-		srv:          d.srv,
-		changesToken: token.StartPageToken,
-		nextInode:    firstDynamicIdx,
-		serverStart:  time.Now(),
-		updateTime:   time.Now(),
-		idMap:        make(map[string]*node),
-		inodeMap:     make(map[index]*node)}
+		gdriveService: w.gdriveService,
+		server:        w.server,
+		changesToken:  token.StartPageToken,
+		nextInode:     firstDynamicIdx,
+		serverStart:   time.Now(),
+		updateTime:    time.Now(),
+		idMap:         make(map[string]*node),
+		inodeMap:      make(map[index]*node)}
 
 	root := s.getOrMakeNode(g)
 
@@ -150,7 +154,8 @@ func (d driveWrapper) Root() (fs.Node, error) {
 
 // FS implements the hello world file system.
 type system struct {
-	srv *drive.Service
+	gdriveService *drive.Service
+	server        *fs.Server
 
 	// there is a single goroutine that reads/updates this, so it isn't guarded
 	changesToken string
@@ -186,7 +191,7 @@ func (s *system) watchForChanges() {
 			// we are getting notified every time the view time for something gets updated
 			// and that isn't useful.  Maybe we can exclude that field and get fewer
 			// notifications.
-			request := s.srv.Changes.List(pageToken).
+			request := s.gdriveService.Changes.List(pageToken).
 				IncludeRemoved(true).
 				RestrictToMyDrive(true).
 				Fields("changes/*,kind,newStartPageToken,nextPageToken")
@@ -236,20 +241,30 @@ func (s *system) processChange(c *drive.Change) {
 
 	switch {
 	case trash:
-		s.removeNode(n)
-		log.Printf("Removed %s", c.FileId)
+		if nodeExists {
+			s.removeNode(n)
+			n.server.InvalidateNodeData(n)
+			log.Printf("Removed %s", c.FileId)
+		}
 	case nodeExists && !includeFile(c.File):
 		// This can happen if a file got renamed to contain a slash, or if it was owned
 		// by the user but is now not
 		s.removeNode(n)
+		n.server.InvalidateNodeData(n)
 		log.Printf("Removed %s", c.FileId)
 	case nodeExists:
 		g, err := makeGnode(c.FileId, c.File)
 		if err != nil {
 			log.Fatalf("Aborting due to change we cannot handle %+v due to %v", c, err)
 		}
+		// TODO(gina) this is more aggressive than needed.  If only
+		// metadata changed, we don't need to invalidate the content
+		// entry
+		if !n.dir {
+			n.server.InvalidateNodeData(n)
+		}
 		n.update(g)
-		log.Printf("Updated %s", c.FileId)
+		log.Printf("Updated %d/%s", n.idx, c.FileId)
 	default:
 		// We want to create this new node if there is at least one parent node in our
 		// tree that has children
@@ -493,7 +508,7 @@ func (n *node) loadChildrenIfEmpty(ctx context.Context) error {
 		return nil
 	}
 
-	gs, err := fetchGnodeChildren(ctx, n.srv, n.id)
+	gs, err := fetchGnodeChildren(ctx, n.gdriveService, n.id)
 	if err != nil {
 		return err
 	}
@@ -573,6 +588,96 @@ func (n *node) Lookup(ctx context.Context, name string) (ret fs.Node, err error)
 	return nil, fuse.ENOENT
 }
 
+var _ fs.NodeOpener = (*node)(nil)
+
+func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenResponse) (handle fs.Handle, err error) {
+	if !req.Flags.IsReadOnly() {
+		return nil, fuse.Errno(syscall.EACCES)
+	}
+
+	if n.dir {
+		// send the caller to ReadDirAll
+		return n, nil
+	}
+
+	res.Flags |= fuse.OpenKeepCache
+
+	return &fileReader{n: n}, nil
+}
+
+var _ fs.HandleReader = (*fileReader)(nil)
+var _ fs.HandleReleaser = (*fileReader)(nil)
+
+type fileReader struct {
+	n       *node
+	init    sync.Once
+	tmpFile *os.File
+}
+
+func (r *fileReader) fetch() {
+	tmpFile, err := ioutil.TempFile("", r.n.name)
+	if err != nil {
+		log.Printf("Error creating temp file for %s: %v", r.n.name, err)
+		return
+	}
+	defer func() {
+		if r.tmpFile == nil {
+			tmpFile.Close()
+		}
+	}()
+
+	resp, err := r.n.gdriveService.Files.Get(r.n.id).Download()
+	if err != nil {
+		log.Printf("Unable to download %s: %v", r.n.id, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	b := make([]byte, 1024*8)
+	for {
+		len, err := resp.Body.Read(b)
+		if len > 0 {
+			tmpFile.Write(b[0:len])
+		}
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			log.Printf("Error fetching bytes for %s: %v", r.n.id, err)
+			return
+		}
+		// else loop around again
+	}
+	r.tmpFile = tmpFile
+}
+
+func (r *fileReader) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
+	r.init.Do(r.fetch)
+	if r.tmpFile == nil {
+		return fuse.EIO
+	}
+	b := make([]byte, req.Size)
+	n, err := r.tmpFile.ReadAt(b, req.Offset)
+	if err != nil && err != io.EOF {
+		log.Printf("Error reading from temp file: %v", err)
+		return fuse.EIO
+	}
+	res.Data = b[:n]
+	return nil
+}
+
+func (r *fileReader) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	if r.tmpFile == nil {
+		return nil
+	}
+	err := r.tmpFile.Close()
+	name := r.tmpFile.Name()
+	if err != nil {
+		log.Printf("Error closing %s: %v", name, err)
+	}
+	os.Remove(name)
+	return err
+}
+
 func (n *node) ReadAll(ctx context.Context) (result []byte, err error) {
 	start := time.Now()
 	n.mu.Lock()
@@ -588,7 +693,7 @@ func (n *node) ReadAll(ctx context.Context) (result []byte, err error) {
 		return []byte{}, nil
 	}
 
-	resp, err := n.srv.Files.Get(id).Download()
+	resp, err := n.gdriveService.Files.Get(id).Download()
 	defer resp.Body.Close()
 	defer func() {
 		log.Printf("reading %d bytes took %s", len(result), time.Since(start))
@@ -779,8 +884,8 @@ func makeGnode(id string, f *drive.File) (*gnode, error) {
 		f.MimeType}, nil
 }
 
-func fetchGnode(srv *drive.Service, id string) (g *gnode, err error) {
-	f, err := srv.Files.Get(id).
+func fetchGnode(gdriveService *drive.Service, id string) (g *gnode, err error) {
+	f, err := gdriveService.Files.Get(id).
 		Fields(fileFields).
 		Do()
 	if err != nil {
@@ -794,7 +899,7 @@ func fetchGnode(srv *drive.Service, id string) (g *gnode, err error) {
 	return makeGnode(id, f)
 }
 
-func fetchGnodeChildren(ctx context.Context, srv *drive.Service, id string) (gs []*gnode, err error) {
+func fetchGnodeChildren(ctx context.Context, gdriveService *drive.Service, id string) (gs []*gnode, err error) {
 	handler := func(r *drive.FileList) error {
 		for _, f := range r.Files {
 			if !includeFile(f) {
@@ -812,7 +917,7 @@ func fetchGnodeChildren(ctx context.Context, srv *drive.Service, id string) (gs 
 	// we are doing in changes.  we could do it in the query below maybe, or filter it in
 	// the handler above, where we filter on name
 
-	err = srv.Files.List().
+	err = gdriveService.Files.List().
 		PageSize(pageSize).
 		Fields(fileGroupFields).
 		Q(fmt.Sprintf("'%s' in parents and trashed = false", id)).
