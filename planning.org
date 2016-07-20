@@ -1,14 +1,12 @@
 
 
 * Things to work on next
-** Understand kernel caching and how to work with it.
-   . I think the kernel can cache (and even prefetch) content.  How do I take advantage of that?
-
-   . How do I then notify the kernel of changes that happen so it can invalidate?
-
-   . Also, can we automatically notify the system of changes so uis can magically update?  See https://github.com/camlistore/camlistore/issues/244
 ** I'm locking upward on writes and basically not locking properly when going downward on dump.  fix that.
 * Things to work on at some point
+** Investigate inotify support
+See https://github.com/camlistore/camlistore/issues/244
+See https://github.com/bazil/fuse/issues/34
+See https://github.com/rvoicilas/inotify-tools/wiki
 ** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  I see that .dump conains reasonable stuff.  I think this is happening:
 
    . I return 2 correct direntry elements
