@@ -3,18 +3,12 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
-	"os/user"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,9 +22,6 @@ import (
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
 	"golang.org/x/net/context"
-	"golang.org/x/oauth2/google"
-
-	"golang.org/x/oauth2"
 )
 
 const (
@@ -74,7 +65,7 @@ func main() {
 	}
 	mountpoint := flag.Arg(0)
 
-	gdriveService, err := getDriveService()
+	gdriveService, err := gdrive.GetService()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -700,106 +691,4 @@ func (d *dumpNodeType) Attr(ctx context.Context, a *fuse.Attr) error {
 
 func (d *dumpNodeType) ReadAll(ctx context.Context) (result []byte, err error) {
 	return []byte(d.text()), nil
-}
-
-////////////////////////////////////////////////////////////////////////
-// GDRIVE SUPPORT BELOW
-////////////////////////////////////////////////////////////////////////
-
-// Returns the drive service
-func getDriveService() (*drive.Service, error) {
-	ctx := context.Background()
-
-	usr, err := user.Current()
-	if err != nil {
-		return nil, fmt.Errorf("Unable to determine home directory: %v", err)
-	}
-
-	secretFile := path.Join(usr.HomeDir, ".config", "mnt-gdrive", "client_secret.json")
-	b, err := ioutil.ReadFile(secretFile)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to read client secret file: %v", err)
-	}
-
-	// If modifying these scopes, delete your previously saved credentials
-	// at ~/.credentials/drive-go-quickstart.json
-	config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse client secret file to config: %v", err)
-	}
-	client := getClient(ctx, config)
-
-	return drive.New(client)
-}
-
-// getClient uses a Context and Config to retrieve a Token
-// then generate a Client. It returns the generated Client.
-func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
-	cacheFile, err := tokenCacheFile()
-	if err != nil {
-		log.Fatalf("Unable to get path to cached credential file. %v", err)
-	}
-	tok, err := tokenFromFile(cacheFile)
-	if err != nil {
-		tok = getTokenFromWeb(config)
-		saveToken(cacheFile, tok)
-	}
-	return config.Client(ctx, tok)
-}
-
-// getTokenFromWeb uses Config to request a Token.
-// It returns the retrieved Token.
-func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Go to the following link in your browser then type the "+
-		"authorization code: \n%v\n", authURL)
-
-	var code string
-	if _, err := fmt.Scan(&code); err != nil {
-		log.Fatalf("Unable to read authorization code %v", err)
-	}
-
-	tok, err := config.Exchange(oauth2.NoContext, code)
-	if err != nil {
-		log.Fatalf("Unable to retrieve token from web %v", err)
-	}
-	return tok
-}
-
-// tokenCacheFile generates credential file path/filename.
-// It returns the generated credential path/filename.
-func tokenCacheFile() (string, error) {
-	usr, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-	tokenCacheDir := filepath.Join(usr.HomeDir, ".credentials")
-	os.MkdirAll(tokenCacheDir, 0700)
-	return filepath.Join(tokenCacheDir,
-		url.QueryEscape("mnt-gdrive.json")), err
-}
-
-// tokenFromFile retrieves a Token from a given file path.
-// It returns the retrieved Token and any read error encountered.
-func tokenFromFile(file string) (*oauth2.Token, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	t := &oauth2.Token{}
-	err = json.NewDecoder(f).Decode(t)
-	defer f.Close()
-	return t, err
-}
-
-// saveToken uses a file path to create a file and store the
-// token in it.
-func saveToken(file string, token *oauth2.Token) {
-	fmt.Printf("Saving credential file to: %s\n", file)
-	f, err := os.Create(file)
-	if err != nil {
-		log.Fatalf("Unable to cache oauth token: %v", err)
-	}
-	defer f.Close()
-	json.NewEncoder(f).Encode(token)
 }
