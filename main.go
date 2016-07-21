@@ -22,6 +22,8 @@ import (
 
 	"google.golang.org/api/drive/v3"
 
+	"github.com/ginabythebay/mnt-gdrive/internal/gdrive"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
@@ -30,8 +32,6 @@ import (
 
 	"golang.org/x/oauth2"
 )
-
-const pageSize = 1000
 
 const (
 	// Not sure if something in the kernel or fuse might get upset by a zero value, so we
@@ -49,9 +49,6 @@ const (
 // TODO(gina) do something realz here
 const MODE_FILE = 0444
 const MODE_DIR = os.ModeDir | 0555
-
-const fileFields = "id, name, ownedByMe, createdTime, modifiedTime, size, version, parents, fileExtension, mimeType, trashed"
-const fileGroupFields = "nextPageToken, files(" + fileFields + ")"
 
 // TODO(gina) make this configurable
 const changeFetchSleep = time.Duration(5) * time.Second
@@ -129,7 +126,7 @@ func (w wrapper) Root() (fs.Node, error) {
 		log.Fatalf("Unable to fetch startPageToken, %q", err)
 	}
 
-	g, err := fetchGnode(w.gdriveService, "root")
+	g, err := gdrive.FetchNode(w.gdriveService, "root")
 	if err != nil {
 		log.Print("Error fetching root", err)
 		return nil, fuse.ENODATA
@@ -246,14 +243,14 @@ func (s *system) processChange(c *drive.Change) {
 			n.server.InvalidateNodeData(n)
 			log.Printf("Removed %s", c.FileId)
 		}
-	case nodeExists && !includeFile(c.File):
+	case nodeExists && !gdrive.IncludeFile(c.File):
 		// This can happen if a file got renamed to contain a slash, or if it was owned
 		// by the user but is now not
 		s.removeNode(n)
 		n.server.InvalidateNodeData(n)
 		log.Printf("Removed %s", c.FileId)
 	case nodeExists:
-		g, err := makeGnode(c.FileId, c.File)
+		g, err := gdrive.NewNode(c.FileId, c.File)
 		if err != nil {
 			log.Fatalf("Aborting due to change we cannot handle %+v due to %v", c, err)
 		}
@@ -276,7 +273,7 @@ func (s *system) processChange(c *drive.Change) {
 			}
 		}
 		if haveReadyParent {
-			g, err := makeGnode(c.FileId, c.File)
+			g, err := gdrive.NewNode(c.FileId, c.File)
 			if err != nil {
 				log.Fatalf("Aborting due to change we cannot handle %+v due to %v", c, err)
 			}
@@ -318,16 +315,16 @@ func (s *system) getNodeIfExists(id string) *node {
 
 // TODO(gina) I think it would make sense to have this instead return a tuple of
 // (*node, idx) where if *node is nil, then the idx will be the value to assign to a new node.
-func (s *system) getOrMakeNode(g *gnode) *node {
+func (s *system) getOrMakeNode(g *gdrive.Node) *node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	n, ok := s.idMap[g.id]
+	n, ok := s.idMap[g.ID]
 	if !ok {
 		s.nextInode++
 		inode := s.nextInode
 		pm := map[string]*node{}
-		for _, id := range g.parentIds {
+		for _, id := range g.ParentIDs {
 			if p, ok := s.idMap[id]; ok {
 				pm[id] = p
 			}
@@ -341,7 +338,7 @@ func (s *system) getOrMakeNode(g *gnode) *node {
 			}
 		}
 		s.inodeMap[inode] = n
-		s.idMap[g.id] = n
+		s.idMap[g.ID] = n
 	} else {
 		n.update(g)
 	}
@@ -378,9 +375,8 @@ type node struct {
 	children map[string]*node
 }
 
-func newNode(s *system, idx index, g *gnode, parents map[string]*node) *node {
-	return &node{system: s, idx: idx, id: g.id, name: g.name, ctime: g.ctime, mtime: g.mtime, size: g.size, version: g.version, dir: g.dir(), parents: parents}
-
+func newNode(s *system, idx index, g *gdrive.Node, parents map[string]*node) *node {
+	return &node{system: s, idx: idx, id: g.ID, name: g.Name, ctime: g.Ctime, mtime: g.Mtime, size: g.Size, version: g.Version, dir: g.Dir(), parents: parents}
 }
 
 type printableNode struct {
@@ -427,18 +423,18 @@ func (n *node) dump(b *bytes.Buffer, level int) {
 	}
 }
 
-func (n *node) update(g *gnode) {
+func (n *node) update(g *gdrive.Node) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.name = g.name
-	n.ctime = g.ctime
-	n.mtime = g.mtime
-	n.size = g.size
-	n.version = g.version
-	n.dir = g.dir()
+	n.name = g.Name
+	n.ctime = g.Ctime
+	n.mtime = g.Mtime
+	n.size = g.Size
+	n.version = g.Version
+	n.dir = g.Dir()
 
 	newParentSet := map[string]bool{}
-	for _, id := range g.parentIds {
+	for _, id := range g.ParentIDs {
 		newParentSet[id] = true
 	}
 
@@ -508,7 +504,7 @@ func (n *node) loadChildrenIfEmpty(ctx context.Context) error {
 		return nil
 	}
 
-	gs, err := fetchGnodeChildren(ctx, n.gdriveService, n.id)
+	gs, err := gdrive.FetchChildren(ctx, n.gdriveService, n.id)
 	if err != nil {
 		return err
 	}
@@ -806,109 +802,4 @@ func saveToken(file string, token *oauth2.Token) {
 	}
 	defer f.Close()
 	json.NewEncoder(f).Encode(token)
-}
-
-// gnode represents raw metadata about a file or directory that came from google drive.
-// Mostly a simple data-holder
-type gnode struct {
-	// should never change
-	id string
-
-	name      string
-	ctime     time.Time
-	mtime     time.Time
-	size      uint64
-	version   int64
-	parentIds []string
-	trashed   bool
-
-	// We use these to determine if it is a folder
-	fileExtension string
-	mimeType      string
-}
-
-func makeGnode(id string, f *drive.File) (*gnode, error) {
-	var ctime time.Time
-	ctime, err := time.Parse(time.RFC3339, f.CreatedTime)
-	if err != nil {
-		log.Printf("Error parsing ctime %#v of node %#v: %s\n", f.CreatedTime, id, err)
-		return nil, fuse.ENODATA
-	}
-
-	var mtime time.Time
-	mtime, err = time.Parse(time.RFC3339, f.ModifiedTime)
-	if err != nil {
-		log.Printf("Error parsing mtime %#v of node %#v: %s\n", f.ModifiedTime, id, err)
-		return nil, fuse.ENODATA
-	}
-
-	return &gnode{id,
-		f.Name,
-		ctime,
-		mtime,
-		uint64(f.Size),
-		f.Version,
-		f.Parents,
-		f.Trashed,
-		f.FileExtension,
-		f.MimeType}, nil
-}
-
-func fetchGnode(gdriveService *drive.Service, id string) (g *gnode, err error) {
-	f, err := gdriveService.Files.Get(id).
-		Fields(fileFields).
-		Do()
-	if err != nil {
-		log.Print("Unable to fetch node info.", err)
-		return nil, fuse.ENODATA
-	}
-	if !includeFile(f) || f.Trashed {
-		return nil, fuse.ENODATA
-	}
-
-	return makeGnode(id, f)
-}
-
-func fetchGnodeChildren(ctx context.Context, gdriveService *drive.Service, id string) (gs []*gnode, err error) {
-	handler := func(r *drive.FileList) error {
-		for _, f := range r.Files {
-			if !includeFile(f) {
-				continue
-			}
-			// if there was an error in makeGnode, we logged it and we will just skip it here
-			if g, _ := makeGnode(f.Id, f); err == nil {
-				gs = append(gs, g)
-			}
-		}
-		return nil
-	}
-
-	// TODO(gina) we need to exclude items that are not in 'my drive', to match what
-	// we are doing in changes.  we could do it in the query below maybe, or filter it in
-	// the handler above, where we filter on name
-
-	err = gdriveService.Files.List().
-		PageSize(pageSize).
-		Fields(fileGroupFields).
-		Q(fmt.Sprintf("'%s' in parents and trashed = false", id)).
-		Pages(ctx, handler)
-	if err != nil {
-		log.Print("Unable to retrieve files.", err)
-		return nil, fuse.ENODATA
-	}
-	return gs, nil
-}
-
-func (g *gnode) dir() bool {
-	// see https://developers.google.com/drive/v3/web/folder
-	if g.mimeType == "application/vnd.google-apps.folder" && g.fileExtension == "" {
-		return true
-	}
-	return false
-}
-
-// includeFile decides if we want to to include the gdrive file in our system
-func includeFile(f *drive.File) bool {
-	// TODO(gina) make the OwnedByMe check configurable
-	return !strings.Contains(f.Name, "/") && f.OwnedByMe
 }
