@@ -53,7 +53,7 @@ func ProcessChanges(service *drive.Service, pageToken *string, changeHandler fun
 		for _, gChange := range cl.Changes {
 			var n *Node
 			if gChange.File != nil {
-				n, err = NewNode(gChange.FileId, gChange.File)
+				n, err = newNode(gChange.FileId, gChange.File)
 				if err != nil {
 					log.Printf("Error converting changes %#v: %v", gChange, err)
 					return sum, err

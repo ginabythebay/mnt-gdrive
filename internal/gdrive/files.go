@@ -25,7 +25,7 @@ func FetchNode(service *drive.Service, id string) (n *Node, err error) {
 		return nil, fuse.ENODATA
 	}
 
-	return NewNode(id, f)
+	return newNode(id, f)
 }
 
 // FetchChildren returns a slice of children, or an error.
@@ -35,8 +35,8 @@ func FetchChildren(ctx context.Context, service *drive.Service, id string) (chil
 			if !IncludeFile(f) {
 				continue
 			}
-			// if there was an error in NewNode, we logged it and we will just skip it here
-			if g, _ := NewNode(f.Id, f); err == nil {
+			// if there was an error in newNode, we logged it and we will just skip it here
+			if g, _ := newNode(f.Id, f); err == nil {
 				children = append(children, g)
 			}
 		}

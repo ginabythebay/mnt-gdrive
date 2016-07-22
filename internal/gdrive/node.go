@@ -48,11 +48,7 @@ type Node struct {
 // TODO(gina) we probably should not be returning fuse errors,
 // but should translate them in the callers
 
-// TODO(gina) I think we can stop exporting NewNode after I pulled
-// everything that calls it out into this package.
-
-// NewNode create a Node, based on an id, and on a google file.
-func NewNode(id string, f *drive.File) (*Node, error) {
+func newNode(id string, f *drive.File) (*Node, error) {
 	var ctime time.Time
 	ctime, err := time.Parse(time.RFC3339, f.CreatedTime)
 	if err != nil {
