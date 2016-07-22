@@ -112,9 +112,9 @@ type wrapper struct {
 }
 
 func (w wrapper) Root() (fs.Node, error) {
-	token, err := w.gdriveService.Changes.GetStartPageToken().Do()
+	startPageToken, err := gdrive.GetStartPageToken(w.gdriveService)
 	if err != nil {
-		log.Fatalf("Unable to fetch startPageToken, %q", err)
+		log.Fatalf("Unable to fetch startPageToken, %v", err)
 	}
 
 	g, err := gdrive.FetchNode(w.gdriveService, "root")
@@ -126,7 +126,7 @@ func (w wrapper) Root() (fs.Node, error) {
 	s := &system{
 		gdriveService: w.gdriveService,
 		server:        w.server,
-		changesToken:  token.StartPageToken,
+		changesToken:  startPageToken,
 		nextInode:     firstDynamicIdx,
 		serverStart:   time.Now(),
 		updateTime:    time.Now(),
@@ -168,43 +168,31 @@ type system struct {
 func (s *system) watchForChanges() {
 	// TODO(gina) provide a way to cancel this via context?
 
+	// TODO(gina) Better to select on a channel that we send ticks to.
+	// Then when something updates the filesystem from our side, we
+	// can run this right away to see the result.
+
 	// TODO(gina) track the last time we fetched changes without an error, use that to
 	// determine staleness elsewhere, to .e.g. shutdown the system if this seems borken
 	for {
 		time.Sleep(changeFetchSleep)
-		pageToken := s.changesToken
-		count := 0
-		for pageToken != "" {
-			// TODO(gina) see if we can reduce notification spam.  Right now I believe
-			// we are getting notified every time the view time for something gets updated
-			// and that isn't useful.  Maybe we can exclude that field and get fewer
-			// notifications.
-			request := s.gdriveService.Changes.List(pageToken).
-				IncludeRemoved(true).
-				RestrictToMyDrive(true).
-				Fields("changes/*,kind,newStartPageToken,nextPageToken")
-			cl, err := request.
-				Do()
-			if err != nil {
-				log.Printf("Error fetching changes, will continue trying: %v", err)
-				break
+
+		sum, err := gdrive.ProcessChanges(s.gdriveService, &s.changesToken,
+			s.processChange)
+		if err != nil {
+			if sum > 0 {
+				log.Fatalf("Aborting due to failure to fetch changes partway through change processing.  We don't support idempotent operations so cannot continue: %v", err)
+			} else {
+				log.Printf("Failed to fetch changes.  Will try again later: %v", err)
 			}
-			for _, ch := range cl.Changes {
-				s.processChange(ch)
-				count++
-			}
-			if cl.NewStartPageToken != "" {
-				s.changesToken = cl.NewStartPageToken
-			}
-			pageToken = cl.NextPageToken
 		}
-		if count > 0 {
-			log.Printf("Successfully applied %d changes", count)
+		if sum > 0 {
+			log.Printf("successfully applied %d changes", sum)
 		}
 	}
 }
 
-func (s *system) processChange(c *drive.Change) {
+func (s *system) processChange(c *drive.Change) (changeCount uint32) {
 	trash := c.Removed || c.File.Trashed
 	var parents []*node
 	s.mu.Lock()
@@ -233,6 +221,7 @@ func (s *system) processChange(c *drive.Change) {
 			s.removeNode(n)
 			n.server.InvalidateNodeData(n)
 			log.Printf("Removed %s", c.FileId)
+			changeCount = 1
 		}
 	case nodeExists && !gdrive.IncludeFile(c.File):
 		// This can happen if a file got renamed to contain a slash, or if it was owned
@@ -240,6 +229,7 @@ func (s *system) processChange(c *drive.Change) {
 		s.removeNode(n)
 		n.server.InvalidateNodeData(n)
 		log.Printf("Removed %s", c.FileId)
+		changeCount = 1
 	case nodeExists:
 		g, err := gdrive.NewNode(c.FileId, c.File)
 		if err != nil {
@@ -253,9 +243,10 @@ func (s *system) processChange(c *drive.Change) {
 		}
 		n.update(g)
 		log.Printf("Updated %d/%s", n.idx, c.FileId)
+		changeCount = 1
 	default:
-		// We want to create this new node if there is at least one parent node in our
-		// tree that has children
+		// We want to create this new node if there is at least one of
+		// our parents has children
 		var haveReadyParent bool
 		for _, p := range parents {
 			if p.haveChildren() {
@@ -270,10 +261,12 @@ func (s *system) processChange(c *drive.Change) {
 			}
 			s.getOrMakeNode(g) // creates in this case
 			log.Printf("Created %s because a parent needed to know about it", c.FileId)
+			changeCount = 1
 		} else {
 			log.Printf("Ignoring unkown id %s", c.FileId)
 		}
 	}
+	return changeCount
 }
 
 func (s *system) removeNode(n *node) {
