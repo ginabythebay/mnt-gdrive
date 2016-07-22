@@ -2,11 +2,14 @@ package gdrive
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"os"
+
+	"google.golang.org/api/drive/v3"
 
 	"bazil.org/fuse"
 	"golang.org/x/net/context"
-	"google.golang.org/api/drive/v3"
 )
 
 // FetchNode looks up a Node by id and either returns it or an error.
@@ -54,4 +57,30 @@ func FetchChildren(ctx context.Context, service *drive.Service, id string) (chil
 		return nil, fuse.ENODATA
 	}
 	return children, nil
+}
+
+// Download downloads a files contents to an already open file, f.
+func Download(service *drive.Service, id string, f *os.File) error {
+	resp, err := service.Files.Get(id).Download()
+	if err != nil {
+		log.Printf("Unable to download %s: %v", id, err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	b := make([]byte, 1024*8)
+	for {
+		len, err := resp.Body.Read(b)
+		if len > 0 {
+			f.Write(b[0:len])
+		}
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			log.Printf("Error fetching bytes for %s: %v", id, err)
+			return err
+		}
+		// else loop around again
+	}
+	return nil
 }

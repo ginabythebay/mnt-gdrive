@@ -606,26 +606,9 @@ func (r *fileReader) fetch() {
 		}
 	}()
 
-	resp, err := r.n.gdriveService.Files.Get(r.n.id).Download()
+	err = gdrive.Download(r.n.gdriveService, r.n.id, tmpFile)
 	if err != nil {
-		log.Printf("Unable to download %s: %v", r.n.id, err)
 		return
-	}
-	defer resp.Body.Close()
-
-	b := make([]byte, 1024*8)
-	for {
-		len, err := resp.Body.Read(b)
-		if len > 0 {
-			tmpFile.Write(b[0:len])
-		}
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			log.Printf("Error fetching bytes for %s: %v", r.n.id, err)
-			return
-		}
-		// else loop around again
 	}
 	r.tmpFile = tmpFile
 }
