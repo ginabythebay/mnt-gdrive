@@ -192,15 +192,15 @@ func (s *system) watchForChanges() {
 	}
 }
 
-func (s *system) processChange(c *drive.Change) (changeCount uint32) {
-	trash := c.Removed || c.File.Trashed
+func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
+	trash := c.Removed || c.Node.Trashed
 	var parents []*node
 	s.mu.Lock()
-	n, nodeExists := s.idMap[c.FileId]
+	n, nodeExists := s.idMap[c.ID]
 	if !trash && !nodeExists {
 		// do this now while holding the system lock so we have it below when deciding
 		// whether it makes sense to create a node for this change
-		for _, pid := range c.File.Parents {
+		for _, pid := range c.Node.ParentIDs {
 			if p, ok := s.idMap[pid]; ok {
 				parents = append(parents, p)
 			}
@@ -220,29 +220,25 @@ func (s *system) processChange(c *drive.Change) (changeCount uint32) {
 		if nodeExists {
 			s.removeNode(n)
 			n.server.InvalidateNodeData(n)
-			log.Printf("Removed %s", c.FileId)
+			log.Printf("Removed %s", c.ID)
 			changeCount = 1
 		}
-	case nodeExists && !gdrive.IncludeFile(c.File):
+	case nodeExists && !c.Node.IncludeNode():
 		// This can happen if a file got renamed to contain a slash, or if it was owned
 		// by the user but is now not
 		s.removeNode(n)
 		n.server.InvalidateNodeData(n)
-		log.Printf("Removed %s", c.FileId)
+		log.Printf("Removed %s", c.ID)
 		changeCount = 1
 	case nodeExists:
-		g, err := gdrive.NewNode(c.FileId, c.File)
-		if err != nil {
-			log.Fatalf("Aborting due to change we cannot handle %+v due to %v", c, err)
-		}
 		// TODO(gina) this is more aggressive than needed.  If only
 		// metadata changed, we don't need to invalidate the content
 		// entry
 		if !n.dir {
 			n.server.InvalidateNodeData(n)
 		}
-		n.update(g)
-		log.Printf("Updated %d/%s", n.idx, c.FileId)
+		n.update(c.Node)
+		log.Printf("Updated %d/%s", n.idx, c.ID)
 		changeCount = 1
 	default:
 		// We want to create this new node if there is at least one of
@@ -255,15 +251,11 @@ func (s *system) processChange(c *drive.Change) (changeCount uint32) {
 			}
 		}
 		if haveReadyParent {
-			g, err := gdrive.NewNode(c.FileId, c.File)
-			if err != nil {
-				log.Fatalf("Aborting due to change we cannot handle %+v due to %v", c, err)
-			}
-			s.getOrMakeNode(g) // creates in this case
-			log.Printf("Created %s because a parent needed to know about it", c.FileId)
+			s.getOrMakeNode(c.Node) // creates in this case
+			log.Printf("Created %s because a parent needed to know about it", c.ID)
 			changeCount = 1
 		} else {
-			log.Printf("Ignoring unkown id %s", c.FileId)
+			log.Printf("Ignoring unkown id %s", c.ID)
 		}
 	}
 	return changeCount

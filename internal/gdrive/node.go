@@ -37,6 +37,7 @@ type Node struct {
 	Size      uint64
 	Version   int64
 	ParentIDs []string
+	OwnedByMe bool
 	Trashed   bool
 
 	// We use these to determine if it is a folder
@@ -73,6 +74,7 @@ func NewNode(id string, f *drive.File) (*Node, error) {
 		uint64(f.Size),
 		f.Version,
 		f.Parents,
+		f.OwnedByMe,
 		f.Trashed,
 		f.FileExtension,
 		f.MimeType}, nil
@@ -85,4 +87,10 @@ func (n *Node) Dir() bool {
 		return true
 	}
 	return false
+}
+
+// TODO(gina) we should not need this and IncludeFile above.
+// IncludeNode decides if we want to to include the node in our system
+func (n *Node) IncludeNode() bool {
+	return !strings.Contains(n.Name, "/") && n.OwnedByMe
 }
