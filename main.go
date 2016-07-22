@@ -194,23 +194,10 @@ func (s *system) watchForChanges() {
 
 func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 	trash := c.Removed || c.Node.Trashed
-	var parents []*node
 	s.mu.Lock()
-	n, nodeExists := s.idMap[c.ID]
-	if !trash && !nodeExists {
-		// do this now while holding the system lock so we have it below when deciding
-		// whether it makes sense to create a node for this change
-		for _, pid := range c.Node.ParentIDs {
-			if p, ok := s.idMap[pid]; ok {
-				parents = append(parents, p)
-			}
-		}
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	// TODO(gina) there is an evil race condition lurking here.  We make decisions up
-	// above while holding the system lock that might be untrue by the time we execute
-	// things below.
+	n, nodeExists := s.idMap[c.ID]
 	//
 	// If I hold onto the system lock, I need rework the code below to make sure it
 	// doesn't try to grab it if called from this call path.
@@ -244,14 +231,14 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 		// We want to create this new node if there is at least one of
 		// our parents has children
 		var haveReadyParent bool
-		for _, p := range parents {
-			if p.haveChildren() {
+		for _, pid := range c.Node.ParentIDs {
+			if p, ok := s.idMap[pid]; ok && p.haveChildren() {
 				haveReadyParent = true
 				break
 			}
 		}
 		if haveReadyParent {
-			s.getOrMakeNode(c.Node) // creates in this case
+			s.insertNode(c.Node)
 			log.Printf("Created %s because a parent needed to know about it", c.ID)
 			changeCount = 1
 		} else {
@@ -261,12 +248,11 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 	return changeCount
 }
 
+// assumes we already have the system lock
 func (s *system) removeNode(n *node) {
-	s.mu.Lock()
 	delete(s.idMap, n.id)
 	delete(s.inodeMap, n.idx)
 	s.updateTime = time.Now()
-	s.mu.Unlock()
 
 	// TODO(gina) figure out how to tell the kernel to invalidate the entry
 
@@ -297,29 +283,35 @@ func (s *system) getOrMakeNode(g *gdrive.Node) *node {
 
 	n, ok := s.idMap[g.ID]
 	if !ok {
-		s.nextInode++
-		inode := s.nextInode
-		pm := map[string]*node{}
-		for _, id := range g.ParentIDs {
-			if p, ok := s.idMap[id]; ok {
-				pm[id] = p
-			}
-		}
-		n = newNode(s, inode, g, pm)
-		for _, p := range pm {
-			if p.haveChildren() {
-				p.mu.Lock()
-				p.children[n.id] = n
-				p.mu.Unlock()
-			}
-		}
-		s.inodeMap[inode] = n
-		s.idMap[g.ID] = n
+		n = s.insertNode(g)
 	} else {
 		n.update(g)
 	}
 	s.updateTime = time.Now()
 
+	return n
+}
+
+// Assumes the system lock is already held
+func (s *system) insertNode(g *gdrive.Node) *node {
+	s.nextInode++
+	inode := s.nextInode
+	pm := map[string]*node{}
+	for _, id := range g.ParentIDs {
+		if p, ok := s.idMap[id]; ok {
+			pm[id] = p
+		}
+	}
+	n := newNode(s, inode, g, pm)
+	for _, p := range pm {
+		if p.haveChildren() {
+			p.mu.Lock()
+			p.children[n.id] = n
+			p.mu.Unlock()
+		}
+	}
+	s.inodeMap[inode] = n
+	s.idMap[g.ID] = n
 	return n
 }
 
