@@ -1,7 +1,7 @@
 
 
 * Things to work on next
-** I'm locking upward on writes and basically not locking properly when going downward on dump.  fix that.
+** Testing
 * Things to work on at some point
 ** Investigate inotify support
 See https://github.com/camlistore/camlistore/issues/244
