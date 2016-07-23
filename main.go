@@ -104,6 +104,8 @@ func main() {
 	}
 }
 
+var _ fs.FS = wrapper{}
+
 type wrapper struct {
 	gd     gdrive.DriveLike
 	server *fs.Server
@@ -112,7 +114,7 @@ type wrapper struct {
 func (w wrapper) Root() (fs.Node, error) {
 	g, err := w.gd.FetchNode("root")
 	if err != nil {
-		log.Print("Error fetching root", err)
+		log.Print("Error fetching root: ", err)
 		return nil, fuse.ENODATA
 	}
 
