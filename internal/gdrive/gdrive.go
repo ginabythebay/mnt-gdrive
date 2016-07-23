@@ -3,6 +3,7 @@ package gdrive
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"os/user"
 	"path"
 
@@ -12,6 +13,14 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// DriveLike is something that can perform google-drive like actions.
+type DriveLike interface {
+	FetchNode(id string) (n *Node, err error)
+	FetchChildren(ctx context.Context, id string) (children []*Node, err error)
+	Download(id string, f *os.File) error
+	ProcessChanges(pageToken *string, changeHandler func(*Change) uint32) (uint32, error)
+}
+
 // Gdrive corresponds to a google drive connection
 type Gdrive struct {
 	svc       *drive.Service
@@ -19,7 +28,7 @@ type Gdrive struct {
 }
 
 // GetService returns a drive service, or an error.
-func GetService() (*Gdrive, error) {
+func GetService() (DriveLike, error) {
 	ctx := context.Background()
 
 	usr, err := user.Current()

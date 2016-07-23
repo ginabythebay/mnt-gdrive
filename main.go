@@ -105,7 +105,7 @@ func main() {
 }
 
 type wrapper struct {
-	gd     *gdrive.Gdrive
+	gd     gdrive.DriveLike
 	server *fs.Server
 }
 
@@ -134,7 +134,7 @@ func (w wrapper) Root() (fs.Node, error) {
 
 // FS implements the hello world file system.
 type system struct {
-	gd     *gdrive.Gdrive
+	gd     gdrive.DriveLike
 	server *fs.Server
 
 	// there is a single goroutine that reads/updates this, so it isn't guarded
