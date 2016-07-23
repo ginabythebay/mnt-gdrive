@@ -13,8 +13,8 @@ import (
 )
 
 // FetchNode looks up a Node by id and either returns it or an error.
-func FetchNode(service *drive.Service, id string) (n *Node, err error) {
-	f, err := service.Files.Get(id).
+func (gd *Gdrive) FetchNode(id string) (n *Node, err error) {
+	f, err := gd.svc.Files.Get(id).
 		Fields(fileFields).
 		Do()
 	if err != nil {
@@ -29,7 +29,7 @@ func FetchNode(service *drive.Service, id string) (n *Node, err error) {
 }
 
 // FetchChildren returns a slice of children, or an error.
-func FetchChildren(ctx context.Context, service *drive.Service, id string) (children []*Node, err error) {
+func (gd *Gdrive) FetchChildren(ctx context.Context, id string) (children []*Node, err error) {
 	handler := func(r *drive.FileList) error {
 		for _, f := range r.Files {
 			if !IncludeFile(f) {
@@ -47,7 +47,7 @@ func FetchChildren(ctx context.Context, service *drive.Service, id string) (chil
 	// we are doing in changes.  we could do it in the query below maybe, or filter it in
 	// the handler above, where we filter on name
 
-	err = service.Files.List().
+	err = gd.svc.Files.List().
 		PageSize(pageSize).
 		Fields(fileGroupFields).
 		Q(fmt.Sprintf("'%s' in parents and trashed = false", id)).
@@ -60,8 +60,8 @@ func FetchChildren(ctx context.Context, service *drive.Service, id string) (chil
 }
 
 // Download downloads a files contents to an already open file, f.
-func Download(service *drive.Service, id string, f *os.File) error {
-	resp, err := service.Files.Get(id).Download()
+func (gd *Gdrive) Download(id string, f *os.File) error {
+	resp, err := gd.svc.Files.Get(id).Download()
 	if err != nil {
 		log.Printf("Unable to download %s: %v", id, err)
 		return err

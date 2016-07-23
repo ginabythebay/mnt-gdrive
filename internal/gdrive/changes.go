@@ -16,7 +16,7 @@ type Change struct {
 }
 
 // GetStartPageToken fetches the start page token to use for changes.
-func GetStartPageToken(service *drive.Service) (string, error) {
+func getStartPageToken(service *drive.Service) (string, error) {
 	token, err := service.Changes.GetStartPageToken().Do()
 	if err != nil {
 		return "", err
@@ -33,7 +33,7 @@ func GetStartPageToken(service *drive.Service) (string, error) {
 // above.  Each change will be passed one at a time to the
 // changeHandler, which can return a counter that will be summed and
 // the sum will be the returned by the ProccessChange function.
-func ProcessChanges(service *drive.Service, pageToken *string, changeHandler func(*Change) uint32) (uint32, error) {
+func (gd *Gdrive) ProcessChanges(pageToken *string, changeHandler func(*Change) uint32) (uint32, error) {
 	token := *pageToken
 	sum := uint32(0)
 	for token != "" {
@@ -41,7 +41,7 @@ func ProcessChanges(service *drive.Service, pageToken *string, changeHandler fun
 		// now we are getting notified every time the view time for
 		// something gets updated and that isn't useful.  Maybe we can
 		// exclude that field and get fewer notifications.
-		cl, err := service.Changes.List(token).
+		cl, err := gd.svc.Changes.List(token).
 			IncludeRemoved(true).
 			RestrictToMyDrive(true).
 			Fields(changeFields).

@@ -2,6 +2,7 @@
 
 * Things to work on next
 ** Testing
+   This will help: https://godoc.org/bazil.org/fuse/fs/fstestutil
 * Things to work on at some point
 ** Investigate inotify support
 See https://github.com/camlistore/camlistore/issues/244

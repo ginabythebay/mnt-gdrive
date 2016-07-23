@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/api/drive/v3"
-
 	"github.com/ginabythebay/mnt-gdrive/internal/gdrive"
 
 	"bazil.org/fuse"
@@ -65,7 +63,7 @@ func main() {
 	}
 	mountpoint := flag.Arg(0)
 
-	gdriveService, err := gdrive.GetService()
+	gd, err := gdrive.GetService()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -94,7 +92,7 @@ func main() {
 	}
 
 	server := fs.New(c, &config)
-	err = server.Serve(wrapper{gdriveService, server})
+	err = server.Serve(wrapper{gd, server})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -107,31 +105,25 @@ func main() {
 }
 
 type wrapper struct {
-	gdriveService *drive.Service
-	server        *fs.Server
+	gd     *gdrive.Gdrive
+	server *fs.Server
 }
 
 func (w wrapper) Root() (fs.Node, error) {
-	startPageToken, err := gdrive.GetStartPageToken(w.gdriveService)
-	if err != nil {
-		log.Fatalf("Unable to fetch startPageToken, %v", err)
-	}
-
-	g, err := gdrive.FetchNode(w.gdriveService, "root")
+	g, err := w.gd.FetchNode("root")
 	if err != nil {
 		log.Print("Error fetching root", err)
 		return nil, fuse.ENODATA
 	}
 
 	s := &system{
-		gdriveService: w.gdriveService,
-		server:        w.server,
-		changesToken:  startPageToken,
-		nextInode:     firstDynamicIdx,
-		serverStart:   time.Now(),
-		updateTime:    time.Now(),
-		idMap:         make(map[string]*node),
-		inodeMap:      make(map[index]*node)}
+		gd:          w.gd,
+		server:      w.server,
+		nextInode:   firstDynamicIdx,
+		serverStart: time.Now(),
+		updateTime:  time.Now(),
+		idMap:       make(map[string]*node),
+		inodeMap:    make(map[index]*node)}
 
 	root := s.getOrMakeNode(g)
 
@@ -142,8 +134,8 @@ func (w wrapper) Root() (fs.Node, error) {
 
 // FS implements the hello world file system.
 type system struct {
-	gdriveService *drive.Service
-	server        *fs.Server
+	gd     *gdrive.Gdrive
+	server *fs.Server
 
 	// there is a single goroutine that reads/updates this, so it isn't guarded
 	changesToken string
@@ -177,8 +169,7 @@ func (s *system) watchForChanges() {
 	for {
 		time.Sleep(changeFetchSleep)
 
-		sum, err := gdrive.ProcessChanges(s.gdriveService, &s.changesToken,
-			s.processChange)
+		sum, err := s.gd.ProcessChanges(&s.changesToken, s.processChange)
 		if err != nil {
 			if sum > 0 {
 				log.Fatalf("Aborting due to failure to fetch changes partway through change processing.  We don't support idempotent operations so cannot continue: %v", err)
@@ -472,7 +463,7 @@ func (n *node) loadChildrenIfEmpty(ctx context.Context) error {
 		return nil
 	}
 
-	gs, err := gdrive.FetchChildren(ctx, n.gdriveService, n.id)
+	gs, err := n.gd.FetchChildren(ctx, n.id)
 	if err != nil {
 		return err
 	}
@@ -590,7 +581,7 @@ func (r *fileReader) fetch() {
 		}
 	}()
 
-	err = gdrive.Download(r.n.gdriveService, r.n.id, tmpFile)
+	err = r.n.gd.Download(r.n.id, tmpFile)
 	if err != nil {
 		return
 	}
