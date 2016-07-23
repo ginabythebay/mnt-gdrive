@@ -17,14 +17,6 @@ const fileGroupFields = "nextPageToken, files(" + fileFields + ")"
 
 const changeFields = "changes/*, kind, newStartPageToken, nextPageToken"
 
-// TODO(gina) future out how to unexport this after this package handles changes
-
-// IncludeFile decides if we want to to include the gdrive file in our system
-func IncludeFile(f *drive.File) bool {
-	// TODO(gina) make the OwnedByMe check configurable
-	return !strings.Contains(f.Name, "/") && f.OwnedByMe
-}
-
 // Node represents raw metadata about a file or directory that came from google drive.
 // Mostly a simple data-holder
 type Node struct {
@@ -85,8 +77,8 @@ func (n *Node) Dir() bool {
 	return false
 }
 
-// TODO(gina) we should not need this and IncludeFile above.
 // IncludeNode decides if we want to to include the node in our system
 func (n *Node) IncludeNode() bool {
-	return !strings.Contains(n.Name, "/") && n.OwnedByMe
+	// TODO(gina) make the OwnedByMe check configurable
+	return !n.Trashed && !strings.Contains(n.Name, "/") && n.OwnedByMe
 }

@@ -21,24 +21,27 @@ func (gd *Gdrive) FetchNode(id string) (n *Node, err error) {
 		log.Print("Unable to fetch node info.", err)
 		return nil, fuse.ENODATA
 	}
-	if !IncludeFile(f) || f.Trashed {
+	n, err = newNode(id, f)
+	if err != nil {
+		return nil, err
+	}
+	if !n.IncludeNode() {
 		return nil, fuse.ENODATA
 	}
-
-	return newNode(id, f)
+	return n, nil
 }
 
 // FetchChildren returns a slice of children, or an error.
 func (gd *Gdrive) FetchChildren(ctx context.Context, id string) (children []*Node, err error) {
 	handler := func(r *drive.FileList) error {
 		for _, f := range r.Files {
-			if !IncludeFile(f) {
+			c, err := newNode(f.Id, f)
+			// if there was an error in newNode, we logged it and we
+			// will just skip it here
+			if err != nil || !c.IncludeNode() {
 				continue
 			}
-			// if there was an error in newNode, we logged it and we will just skip it here
-			if g, _ := newNode(f.Id, f); err == nil {
-				children = append(children, g)
-			}
+			children = append(children, c)
 		}
 		return nil
 	}
