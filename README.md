@@ -1,5 +1,7 @@
 # mnt-gdrive
 
+[![Build Status](https://travis-ci.org/ginabythebay/mnt-gdrive.svg?branch=master)](https://travis-ci.org/ginabythebay/mnt-gdrive)
+
 Allows you to mount google drive via FUSE.  Readonly for now.  Probably has lots of wierd dangerous bugs.
 
 It has only been tested on Linux.  If you want local access to your google drive files on a Mac,  I suggest using the [google provided solution](https://tools.google.com/dlpage/drive).
