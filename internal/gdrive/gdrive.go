@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"sync"
 
 	"google.golang.org/api/drive/v3"
 
@@ -18,12 +19,14 @@ type DriveLike interface {
 	FetchNode(id string) (n *Node, err error)
 	FetchChildren(ctx context.Context, id string) (children []*Node, err error)
 	Download(id string, f *os.File) error
-	ProcessChanges(pageToken *string, changeHandler func(*Change) uint32) (uint32, error)
+	ProcessChanges(changeHandler func(*Change) uint32) (uint32, error)
 }
 
 // Gdrive corresponds to a google drive connection
 type Gdrive struct {
-	svc       *drive.Service
+	svc *drive.Service
+
+	pageMu    sync.Mutex
 	pageToken string
 }
 
@@ -59,5 +62,5 @@ func GetService() (DriveLike, error) {
 		return nil, err
 	}
 
-	return &Gdrive{svc, token}, nil
+	return &Gdrive{svc: svc, pageToken: token}, nil
 }

@@ -92,7 +92,10 @@ func main() {
 	}
 
 	server := fs.New(c, &config)
-	err = server.Serve(wrapper{gd, server})
+	system := newSystem(gd, server)
+
+	go system.watchForChanges()
+	err = server.Serve(system)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,43 +107,12 @@ func main() {
 	}
 }
 
-var _ fs.FS = wrapper{}
-
-type wrapper struct {
-	gd     gdrive.DriveLike
-	server *fs.Server
-}
-
-func (w wrapper) Root() (fs.Node, error) {
-	g, err := w.gd.FetchNode("root")
-	if err != nil {
-		log.Print("Error fetching root: ", err)
-		return nil, fuse.ENODATA
-	}
-
-	s := &system{
-		gd:          w.gd,
-		server:      w.server,
-		nextInode:   firstDynamicIdx,
-		serverStart: time.Now(),
-		updateTime:  time.Now(),
-		idMap:       make(map[string]*node),
-		inodeMap:    make(map[index]*node)}
-
-	root := s.getOrMakeNode(g)
-
-	go s.watchForChanges()
-
-	return root, nil
-}
+var _ fs.FS = &system{}
 
 // FS implements the hello world file system.
 type system struct {
 	gd     gdrive.DriveLike
 	server *fs.Server
-
-	// there is a single goroutine that reads/updates this, so it isn't guarded
-	changesToken string
 
 	// guards all of the fields below
 	mu sync.Mutex
@@ -159,6 +131,30 @@ type system struct {
 	dumpNode     *dumpNodeType
 }
 
+func newSystem(gd gdrive.DriveLike, server *fs.Server) *system {
+	return &system{
+		gd:          gd,
+		server:      server,
+		nextInode:   firstDynamicIdx,
+		serverStart: time.Now(),
+		updateTime:  time.Now(),
+		idMap:       make(map[string]*node),
+		inodeMap:    make(map[index]*node)}
+
+}
+
+func (s *system) Root() (fs.Node, error) {
+	g, err := s.gd.FetchNode("root")
+	if err != nil {
+		log.Print("Error fetching root: ", err)
+		return nil, fuse.ENODATA
+	}
+
+	root := s.getOrMakeNode(g)
+
+	return root, nil
+}
+
 func (s *system) watchForChanges() {
 	// TODO(gina) provide a way to cancel this via context?
 
@@ -168,10 +164,12 @@ func (s *system) watchForChanges() {
 
 	// TODO(gina) track the last time we fetched changes without an error, use that to
 	// determine staleness elsewhere, to .e.g. shutdown the system if this seems borken
+	log.Println("entering watchForChanges")
+	defer log.Println("exiting watchForChanges")
 	for {
 		time.Sleep(changeFetchSleep)
 
-		sum, err := s.gd.ProcessChanges(&s.changesToken, s.processChange)
+		sum, err := s.gd.ProcessChanges(s.processChange)
 		if err != nil {
 			if sum > 0 {
 				log.Fatalf("Aborting due to failure to fetch changes partway through change processing.  We don't support idempotent operations so cannot continue: %v", err)
@@ -191,9 +189,6 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 	defer s.mu.Unlock()
 
 	n, nodeExists := s.idMap[c.ID]
-	//
-	// If I hold onto the system lock, I need rework the code below to make sure it
-	// doesn't try to grab it if called from this call path.
 
 	switch {
 	case trash:

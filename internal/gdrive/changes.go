@@ -33,8 +33,10 @@ func getStartPageToken(service *drive.Service) (string, error) {
 // above.  Each change will be passed one at a time to the
 // changeHandler, which can return a counter that will be summed and
 // the sum will be the returned by the ProccessChange function.
-func (gd *Gdrive) ProcessChanges(pageToken *string, changeHandler func(*Change) uint32) (uint32, error) {
-	token := *pageToken
+func (gd *Gdrive) ProcessChanges(changeHandler func(*Change) uint32) (uint32, error) {
+	gd.pageMu.Lock()
+	defer gd.pageMu.Unlock()
+	token := gd.pageToken
 	sum := uint32(0)
 	for token != "" {
 		// TODO(gina) see if we can reduce notification spam.  Right
@@ -63,7 +65,7 @@ func (gd *Gdrive) ProcessChanges(pageToken *string, changeHandler func(*Change) 
 			sum += changeHandler(ch)
 		}
 		if cl.NewStartPageToken != "" {
-			*pageToken = cl.NewStartPageToken
+			gd.pageToken = cl.NewStartPageToken
 		}
 		token = cl.NextPageToken
 	}

@@ -92,13 +92,13 @@ func (fake *fakeDrive) Download(id string, f *os.File) error {
 	return nil
 }
 
-func (fake *fakeDrive) ProcessChanges(pageToken *string, changeHandler func(*gdrive.Change) uint32) (uint32, error) {
+func (fake *fakeDrive) ProcessChanges(changeHandler func(*gdrive.Change) uint32) (uint32, error) {
 	log.Fatal("implement me")
 	return 0, fuse.EIO
 }
 
 func mount(mnt *fstestutil.Mount) fs.FS {
-	return wrapper{&fakeDrive{allNodes()}, mnt.Server}
+	return newSystem(&fakeDrive{allNodes()}, mnt.Server)
 }
 
 func neverErr(fi os.FileInfo) error {
