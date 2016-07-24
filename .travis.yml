@@ -9,4 +9,6 @@ language: go
 go:
   - 1.6.3
   - tip
-script: go test -v ./...
+script:
+  - go install
+  - go test -v ./...
