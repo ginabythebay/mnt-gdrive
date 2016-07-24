@@ -39,8 +39,8 @@ func makeDir(id string, name string, parentID string) *gdrive.Node {
 	return &gdrive.Node{ID: id, Name: name, ParentIDs: parents, MimeType: "application/vnd.google-apps.folder"}
 }
 
-func contentForTextFile(n *gdrive.Node) []byte {
-	return []byte(fmt.Sprintf("content for %s", n.Name))
+func contentForTextFile(id string) []byte {
+	return []byte(fmt.Sprintf("content for %s", id))
 }
 
 func makeTextFile(id string, name string, parentId string) *gdrive.Node {
@@ -51,7 +51,7 @@ func makeTextFile(id string, name string, parentId string) *gdrive.Node {
 		ParentIDs:     parents,
 		MimeType:      "text/plain",
 		FileExtension: ".txt"}
-	n.Size = uint64(len(contentForTextFile(n)))
+	n.Size = uint64(len(contentForTextFile(id)))
 	return n
 }
 
@@ -84,11 +84,7 @@ func (fake *fakeDrive) FetchChildren(ctx context.Context, id string) (children [
 }
 
 func (fake *fakeDrive) Download(id string, f *os.File) error {
-	n, err := fake.FetchNode(id)
-	if err != nil {
-		return err
-	}
-	f.Write(contentForTextFile(n))
+	f.Write(contentForTextFile(id))
 	return nil
 }
 
@@ -107,7 +103,12 @@ func neverErr(fi os.FileInfo) error {
 
 func TestScenario(t *testing.T) {
 	fmt.Print("before mount func thing\n")
-	mnt, err := fstestutil.MountedFuncT(t, mount, nil)
+	var sys *system
+	mntFunc := func(mnt *fstestutil.Mount) fs.FS {
+		sys = newSystem(&fakeDrive{allNodes()}, mnt.Server)
+		return sys
+	}
+	mnt, err := fstestutil.MountedFuncT(t, mntFunc, nil)
 	if err != nil {
 		t.Error(err)
 	}
@@ -132,14 +133,38 @@ func TestScenario(t *testing.T) {
 		"file two": neverErr,
 	})
 
-	verifyFileContents(t, path.Join(root, "file one"), []byte("content for file one"))
-	verifyFileContents(t, path.Join(root, "dir two", "file two"), []byte("content for file two"))
+	verifyFileContents(t, path.Join(root, "file one"), []byte("content for file_one_id"))
+	verifyFileContents(t, path.Join(root, "dir two", "file two"), []byte("content for file_two_id"))
+
+	createFileThreeChange := gdrive.Change{
+		ID:      "file_three_id",
+		Removed: false,
+		Node:    makeTextFile("file_three_id", "file three", "dir_two_id"),
+	}
+	sys.processChange(&createFileThreeChange)
+	fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+		"file two":   neverErr,
+		"file three": neverErr,
+	})
+	verifyFileContents(t, path.Join(root, "dir two", "file three"), []byte("content for file_three_id"))
+
+	rmFileThreeChange := gdrive.Change{
+		ID:      "file_three_id",
+		Removed: true,
+		Node:    nil,
+	}
+	sys.processChange(&rmFileThreeChange)
+	fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+		"file two":   neverErr,
+		"file three": neverErr,
+	})
 }
 
 func verifyFileContents(t *testing.T, path string, expected []byte) {
 	found, err := ioutil.ReadFile(path)
 	if err != nil {
 		t.Errorf("Error reading %q: %v", path, err)
+		return
 	}
 	if !bytes.Equal(found, expected) {
 		t.Errorf("file %q contained %q when we expected %q", path, found, expected)
