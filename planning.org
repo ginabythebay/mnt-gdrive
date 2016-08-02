@@ -48,8 +48,13 @@ See https://github.com/rvoicilas/inotify-tools/wiki
    on.
 ** consider tracking last-viewed time as attr atime
 ** Umm, write mode
-*** writing to new file
-  bug: after creating the file, it does not appear to be in our local cache
+*** handling create calls
+  bug: look at truncate flag
+  Need to make open far smarter, and forward create all to it
+  consider O_CREAT, O_EXCL, O_TRUNC
+  also consider read/write
+  also O_APPEND
+  also O_ASYNC/O_FSYNC/O_SYNC
 *** writing to existing file
   Need to start by downloading existing contents
 
