@@ -112,7 +112,7 @@ func (fake *Drive) FetchChildren(ctx context.Context, id string) (children []*gd
 }
 
 // Download copies content for our in memory node into a file.
-func (fake *Drive) Download(id string, f *os.File) error {
+func (fake *Drive) Download(ctx context.Context, id string, f *os.File) error {
 	f.Write(contentForTextFile(id))
 	return nil
 }

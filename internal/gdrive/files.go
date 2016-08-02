@@ -21,7 +21,7 @@ func (gd *Gdrive) FetchNode(id string) (n *Node, err error) {
 		log.Print("Unable to fetch node info.", err)
 		return nil, fuse.ENODATA
 	}
-	n, err = newNode(id, f)
+	n, err = newNode(f.Id, f)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,14 @@ func (gd *Gdrive) FetchChildren(ctx context.Context, id string) (children []*Nod
 }
 
 // Download downloads a files contents to an already open file, f.
-func (gd *Gdrive) Download(id string, f *os.File) error {
+func (gd *Gdrive) Download(ctx context.Context, id string, f *os.File) error {
+	done := ctx.Done()
+	select {
+	case <-done:
+		log.Printf("Download for %q aborted, returning before starting download.", id)
+		return ctx.Err()
+	default:
+	}
 	resp, err := gd.svc.Files.Get(id).Download()
 	if err != nil {
 		log.Printf("Unable to download %s: %v", id, err)
@@ -94,11 +101,24 @@ func (gd *Gdrive) Download(id string, f *os.File) error {
 	}
 	defer resp.Body.Close()
 
+	totalDownloaded := 0
 	b := make([]byte, 1024*8)
 	for {
+		select {
+		case <-done:
+			log.Printf("Download for %q aborted, returning early after downloading %d bytes.", id, totalDownloaded)
+			return ctx.Err()
+		default:
+		}
+
 		len, err := resp.Body.Read(b)
+		totalDownloaded += len
+		log.Printf("Downloading %q fetched %d bytes", id, len)
 		if len > 0 {
-			f.Write(b[0:len])
+			if _, err = f.Write(b[0:len]); err != nil {
+				log.Printf("Error writing to temp file during download of %q: %v", id, err)
+				return fuse.EIO
+			}
 		}
 		if err == io.EOF {
 			break

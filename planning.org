@@ -61,6 +61,7 @@ See https://github.com/rvoicilas/inotify-tools/wiki
   At the end when we are writing back, do we want to verify that the
   gdrive file has not changed beneath us?  Maybe we don't care and
   just do last-one-wins.
+*** honor flush calls
 *** settattr  
 *** mv
 *** rm

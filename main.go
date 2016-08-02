@@ -4,8 +4,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -241,7 +239,6 @@ func (s *system) processChange(c *gdrive.Change, cs *gdrive.ChangeStats) {
 			n.server.InvalidateNodeData(n)
 		}
 		n.update(c.Node)
-		log.Printf("Updated %d/%s", n.idx, c.ID)
 		cs.Changed++
 	default:
 		// We want to create this new node if there is at least one of
@@ -426,6 +423,7 @@ func (n *node) update(g *gdrive.Node) {
 	// remove us
 	for _, ep := range n.parents {
 		if _, ok := newParentSet[ep.id]; !ok {
+			log.Printf("Update %q, removing %q as a parent", n.id, ep.id)
 			ep.removeChild(n.id)
 			delete(n.parents, ep.id)
 		}
@@ -436,6 +434,7 @@ func (n *node) update(g *gdrive.Node) {
 	for np := range newParentSet {
 		if _, ok := n.parents[np]; !ok {
 			if p := n.getNodeIfExists(np); p != nil {
+				log.Printf("Update %q, adding %q as a parent", n.id, np)
 				p.addChild(n)
 				n.parents[np] = p
 			}
@@ -612,132 +611,12 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	switch {
 	case req.Flags.IsReadOnly():
 		res.Flags |= fuse.OpenKeepCache
-		return &fileReader{n: n}, nil
+		return newFileReader(n), nil
 	case req.Flags&fuse.OpenCreate != 0:
 		return newFilewWriter(n)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}
-}
-
-var _ fs.HandleWriter = (*fileWriter)(nil)
-var _ fs.HandleReleaser = (*fileWriter)(nil)
-
-type fileWriter struct {
-	n *node
-
-	mu      sync.Mutex
-	tmpFile *os.File
-}
-
-func newFilewWriter(n *node) (*fileWriter, error) {
-	tmpFile, err := ioutil.TempFile("", n.name)
-	if err != nil {
-		log.Printf("Error creating temp file for %s: %v", n.name, err)
-		return nil, fuse.EIO
-	}
-	return &fileWriter{n: n, tmpFile: tmpFile}, nil
-}
-
-func (w *fileWriter) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if _, err := w.tmpFile.Seek(req.Offset, 0); err != nil {
-	}
-
-	if _, err := w.tmpFile.WriteAt(req.Data, req.Offset); err != nil {
-		log.Printf("Error writing %q for write to %q: %v", w.n.name, req.Offset, err)
-		return fuse.EIO
-	}
-
-	return nil
-}
-
-func (w *fileWriter) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	w.mu.Lock()
-	defer func() {
-		w.mu.Unlock()
-
-		err := w.tmpFile.Close()
-		name := w.tmpFile.Name()
-		if err != nil {
-			log.Printf("Error closing %s: %v", name, err)
-		}
-		os.Remove(name)
-	}()
-	// if err := w.tmpFile.Sync(); err != nil {
-	// 	log.Printf("Error syncing %q : %v", w.n.name, err)
-	// 	return fuse.EIO
-	// }
-	fi, err := w.tmpFile.Stat()
-	if err != nil {
-		log.Printf("Error stating %q for write: %v", w.n.name, err)
-		return fuse.EIO
-	}
-	// TODO(gina) dump this size check.  What if there is existing
-	// content in gdrive and we need to truncate it?
-	if fi.Size() != 0 {
-		log.Fatal("TODO(gina) implement file content upload")
-	}
-
-	return nil
-}
-
-var _ fs.HandleReader = (*fileReader)(nil)
-var _ fs.HandleReleaser = (*fileReader)(nil)
-
-type fileReader struct {
-	n       *node
-	init    sync.Once
-	tmpFile *os.File
-}
-
-func (r *fileReader) fetch() {
-	tmpFile, err := ioutil.TempFile("", r.n.name)
-	if err != nil {
-		log.Printf("Error creating temp file for %s: %v", r.n.name, err)
-		return
-	}
-	defer func() {
-		if r.tmpFile == nil {
-			tmpFile.Close()
-		}
-	}()
-
-	err = r.n.gd.Download(r.n.id, tmpFile)
-	if err != nil {
-		return
-	}
-	r.tmpFile = tmpFile
-}
-
-func (r *fileReader) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
-	r.init.Do(r.fetch)
-	if r.tmpFile == nil {
-		return fuse.EIO
-	}
-	b := make([]byte, req.Size)
-	n, err := r.tmpFile.ReadAt(b, req.Offset)
-	if err != nil && err != io.EOF {
-		log.Printf("Error reading from temp file: %v", err)
-		return fuse.EIO
-	}
-	res.Data = b[:n]
-	return nil
-}
-
-func (r *fileReader) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	if r.tmpFile == nil {
-		return nil
-	}
-	err := r.tmpFile.Close()
-	name := r.tmpFile.Name()
-	if err != nil {
-		log.Printf("Error closing %s: %v", name, err)
-	}
-	os.Remove(name)
-	return err
 }
 
 type dumpNodeType struct {
