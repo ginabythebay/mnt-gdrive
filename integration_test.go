@@ -33,8 +33,7 @@ func neverErr(fi os.FileInfo) error {
 	return nil
 }
 
-func TestScenario(t *testing.T) {
-	fmt.Print("before mount func thing\n")
+func testMount(t *testing.T) (*fstestutil.Mount, *system) {
 	var sys *system
 	mntFunc := func(mnt *fstestutil.Mount) fs.FS {
 		sys = newSystem(fakedrive.NewDrive(allNodes()), mnt.Server, true)
@@ -42,14 +41,20 @@ func TestScenario(t *testing.T) {
 	}
 	mnt, err := fstestutil.MountedFuncT(t, mntFunc, nil)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
+	if mnt == nil {
+		t.Fatal("nil mnt")
+	}
+
+	return mnt, sys
+}
+
+func TestChanges(t *testing.T) {
+	mnt, sys := testMount(t)
 	defer func() {
 		mnt.Close()
 	}()
-	if mnt == nil {
-		t.Error("nil mnt")
-	}
 
 	fmt.Print("before root check\n")
 	root := mnt.Dir
