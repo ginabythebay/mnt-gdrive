@@ -607,6 +607,8 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 		return n, nil
 	}
 
+	// TODO(gina) fix up read/write handling
+	// This is pretty borken.  Need to consult readonly config value here
 	switch {
 	case req.Flags.IsReadOnly():
 		res.Flags |= fuse.OpenKeepCache
