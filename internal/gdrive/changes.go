@@ -1,6 +1,7 @@
 package gdrive
 
 import (
+	"fmt"
 	"log"
 
 	"google.golang.org/api/drive/v3"
@@ -33,11 +34,11 @@ func getStartPageToken(service *drive.Service) (string, error) {
 // above.  Each change will be passed one at a time to the
 // changeHandler, which can return a counter that will be summed and
 // the sum will be the returned by the ProccessChange function.
-func (gd *Gdrive) ProcessChanges(changeHandler func(*Change) uint32) (uint32, error) {
+func (gd *Gdrive) ProcessChanges(changeHandler func(*Change, *ChangeStats)) (ChangeStats, error) {
+	cs := ChangeStats{}
 	gd.pageMu.Lock()
 	defer gd.pageMu.Unlock()
 	token := gd.pageToken
-	sum := uint32(0)
 	for token != "" {
 		// TODO(gina) see if we can reduce notification spam.  Right
 		// now we are getting notified every time the view time for
@@ -50,7 +51,7 @@ func (gd *Gdrive) ProcessChanges(changeHandler func(*Change) uint32) (uint32, er
 			Do()
 		if err != nil {
 			log.Printf("Error fetching changes: %v", err)
-			return sum, err
+			return cs, err
 		}
 		for _, gChange := range cl.Changes {
 			var n *Node
@@ -58,16 +59,33 @@ func (gd *Gdrive) ProcessChanges(changeHandler func(*Change) uint32) (uint32, er
 				n, err = newNode(gChange.FileId, gChange.File)
 				if err != nil {
 					log.Printf("Error converting changes %#v: %v", gChange, err)
-					return sum, err
+					return cs, err
 				}
 			}
 			ch := &Change{n.ID, gChange.Removed, n}
-			sum += changeHandler(ch)
+			changeHandler(ch, &cs)
 		}
 		if cl.NewStartPageToken != "" {
 			gd.pageToken = cl.NewStartPageToken
 		}
 		token = cl.NextPageToken
 	}
-	return sum, nil
+	return cs, nil
+}
+
+// ChangeStats totals up what happened
+type ChangeStats struct {
+	// Number of changes we applied
+	Changed uint32
+	// Number of changes we ignored
+	Ignored uint32
+}
+
+func (cs *ChangeStats) String() string {
+	return fmt.Sprintf("Processed %d changes and ignored %d changes", cs.Changed, cs.Ignored)
+}
+
+// FetchedChanges returns true if any changes were fetched
+func (cs *ChangeStats) FetchedChanges() bool {
+	return cs.Changed > 0 || cs.Ignored > 0
 }

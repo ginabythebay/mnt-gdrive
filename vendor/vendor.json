@@ -43,6 +43,12 @@
 			"revision": ""
 		},
 		{
+			"checksumSHA1": "Gp8s2Js69bsjFUcWqYyTTaMoW+U=",
+			"path": "github.com/codegangsta/cli",
+			"revision": "168c95418e66e019fe17b8f4f5c45aa62ff80e23",
+			"revisionTime": "2016-08-01T03:09:57Z"
+		},
+		{
 			"checksumSHA1": "piwYMQqpsfAur670v6rFg6gqk/c=",
 			"path": "github.com/golang/protobuf/proto",
 			"revision": "874264fbbb43f4d91e999fecb4b40143ed611400",

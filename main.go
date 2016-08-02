@@ -3,17 +3,19 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/codegangsta/cli"
 	"github.com/ginabythebay/mnt-gdrive/internal/gdrive"
 
 	"bazil.org/fuse"
@@ -47,34 +49,56 @@ const changeFetchSleep = time.Duration(5) * time.Second
 // refer to the struct that many filesystems use, that seems confusing.
 type index uint64
 
-func usage() {
-	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT\n", os.Args[0])
-	flag.PrintDefaults()
+func main() {
+	sigChan := make(chan os.Signal)
+	go func() {
+		stacktrace := make([]byte, 8192)
+		for _ = range sigChan {
+			length := runtime.Stack(stacktrace, true)
+			fmt.Println(string(stacktrace[:length]))
+		}
+	}()
+	signal.Notify(sigChan, syscall.SIGQUIT)
+
+	app := cli.NewApp()
+	app.Name = "mnt-gdrive"
+	app.Usage = "mount a google drive as a fuse filesystem"
+	app.Action = mount
+	app.Flags = []cli.Flag{
+		cli.BoolFlag{
+			Name:  "w, writeable",
+			Usage: "Mounts drive using writeable mode"},
+	}
+	app.Run(os.Args)
 }
 
-func main() {
-	flag.Usage = usage
-	flag.Parse()
-
-	if flag.NArg() != 1 {
-		usage()
-		os.Exit(2)
+func mount(ctx *cli.Context) {
+	args := ctx.Args()
+	switch {
+	case len(args) == 0:
+		log.Fatal("You must specify a single argument which is path to the directory to use as a mount point.")
+	case len(args) > 1:
+		log.Fatal("Too many arguments specified. You must specify a single argument which is path to the directory to use as a mount point.")
 	}
-	mountpoint := flag.Arg(0)
 
-	gd, err := gdrive.GetService()
+	mountpoint := args.First()
+	readonly := !ctx.Bool("writeable")
+
+	gd, err := gdrive.GetService(readonly)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	c, err := fuse.Mount(
-		mountpoint,
+	mountOptions := []fuse.MountOption{
 		fuse.FSName("mntgdrive"),
 		fuse.Subtype("mntgrdrivefs"),
 		fuse.LocalVolume(),
 		fuse.VolumeName("GDrive"),
-	)
+	}
+	if readonly {
+		mountOptions = append(mountOptions, fuse.ReadOnly())
+	}
+	c, err := fuse.Mount(mountpoint, mountOptions...)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -92,7 +116,7 @@ func main() {
 	}
 
 	server := fs.New(c, &config)
-	system := newSystem(gd, server)
+	system := newSystem(gd, server, readonly)
 
 	go system.watchForChanges()
 	err = server.Serve(system)
@@ -114,6 +138,8 @@ type system struct {
 	gd     gdrive.DriveLike
 	server *fs.Server
 
+	readonly bool
+
 	// guards all of the fields below
 	mu sync.Mutex
 
@@ -131,10 +157,11 @@ type system struct {
 	dumpNode     *dumpNodeType
 }
 
-func newSystem(gd gdrive.DriveLike, server *fs.Server) *system {
+func newSystem(gd gdrive.DriveLike, server *fs.Server, readonly bool) *system {
 	return &system{
 		gd:          gd,
 		server:      server,
+		readonly:    readonly,
 		nextInode:   firstDynamicIdx,
 		serverStart: time.Now(),
 		updateTime:  time.Now(),
@@ -169,21 +196,22 @@ func (s *system) watchForChanges() {
 	for {
 		time.Sleep(changeFetchSleep)
 
-		sum, err := s.gd.ProcessChanges(s.processChange)
+		cs, err := s.gd.ProcessChanges(s.processChange)
 		if err != nil {
-			if sum > 0 {
+			if cs.FetchedChanges() {
 				log.Fatalf("Aborting due to failure to fetch changes partway through change processing.  We don't support idempotent operations so cannot continue: %v", err)
 			} else {
 				log.Printf("Failed to fetch changes.  Will try again later: %v", err)
 			}
-		}
-		if sum > 0 {
-			log.Printf("successfully applied %d changes", sum)
+		} else {
+			if cs.FetchedChanges() {
+				log.Print(cs.String())
+			}
 		}
 	}
 }
 
-func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
+func (s *system) processChange(c *gdrive.Change, cs *gdrive.ChangeStats) {
 	trash := c.Removed || c.Node.Trashed
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,7 +224,7 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 			s.removeNode(n)
 			n.server.InvalidateNodeData(n)
 			log.Printf("Removed %s", c.ID)
-			changeCount = 1
+			cs.Changed++
 		}
 	case nodeExists && !c.Node.IncludeNode():
 		// This can happen if a file got renamed to contain a slash, or if it was owned
@@ -204,7 +232,7 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 		s.removeNode(n)
 		n.server.InvalidateNodeData(n)
 		log.Printf("Removed %s", c.ID)
-		changeCount = 1
+		cs.Changed++
 	case nodeExists:
 		// TODO(gina) this is more aggressive than needed.  If only
 		// metadata changed, we don't need to invalidate the content
@@ -214,7 +242,7 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 		}
 		n.update(c.Node)
 		log.Printf("Updated %d/%s", n.idx, c.ID)
-		changeCount = 1
+		cs.Changed++
 	default:
 		// We want to create this new node if there is at least one of
 		// our parents has children
@@ -228,12 +256,12 @@ func (s *system) processChange(c *gdrive.Change) (changeCount uint32) {
 		if haveReadyParent {
 			s.insertNode(c.Node)
 			log.Printf("Created %s because a parent needed to know about it", c.ID)
-			changeCount = 1
+			cs.Changed++
 		} else {
+			cs.Ignored++
 			log.Printf("Ignoring unkown id %s", c.ID)
 		}
 	}
-	return changeCount
 }
 
 // assumes we already have the system lock
@@ -256,9 +284,8 @@ func (s *system) removeNode(n *node) {
 	}
 }
 
+// Assumes we have the system lock already
 func (s *system) getNodeIfExists(id string) *node {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	n, _ := s.idMap[id]
 	return n
 }
@@ -379,6 +406,7 @@ func (n *node) dump(b *bytes.Buffer, level int) {
 	}
 }
 
+// Assumes we already have the system lock
 func (n *node) update(g *gdrive.Node) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -540,21 +568,118 @@ func (n *node) Lookup(ctx context.Context, name string) (ret fs.Node, err error)
 	return nil, fuse.ENOENT
 }
 
+var _ fs.NodeCreater = (*node)(nil)
+
+func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+	if n.readonly {
+		return nil, nil, fuse.ENOTSUP
+	}
+	if !n.dir {
+		return nil, nil, fuse.ENOTSUP
+	}
+	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+		return nil, nil, err
+	}
+	dir := req.Mode&os.ModeDir != 0
+	g, err := n.gd.CreateNode(n.id, req.Name, dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	n.system.mu.Lock()
+	defer n.system.mu.Unlock()
+	created := n.insertNode(g)
+
+	resp.Node = fuse.NodeID(created.idx)
+	created.Attr(ctx, &resp.Attr)
+
+	handle, err := newFilewWriter(n)
+	if err != nil {
+		return nil, nil, err
+	}
+	return created, handle, nil
+}
+
 var _ fs.NodeOpener = (*node)(nil)
 
 func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenResponse) (handle fs.Handle, err error) {
-	if !req.Flags.IsReadOnly() {
-		return nil, fuse.Errno(syscall.EACCES)
-	}
-
 	if n.dir {
 		// send the caller to ReadDirAll
 		return n, nil
 	}
 
-	res.Flags |= fuse.OpenKeepCache
+	switch {
+	case req.Flags.IsReadOnly():
+		res.Flags |= fuse.OpenKeepCache
+		return &fileReader{n: n}, nil
+	case req.Flags&fuse.OpenCreate != 0:
+		return newFilewWriter(n)
+	default:
+		return nil, fuse.Errno(syscall.EACCES)
+	}
+}
 
-	return &fileReader{n: n}, nil
+var _ fs.HandleWriter = (*fileWriter)(nil)
+var _ fs.HandleReleaser = (*fileWriter)(nil)
+
+type fileWriter struct {
+	n *node
+
+	mu      sync.Mutex
+	tmpFile *os.File
+}
+
+func newFilewWriter(n *node) (*fileWriter, error) {
+	tmpFile, err := ioutil.TempFile("", n.name)
+	if err != nil {
+		log.Printf("Error creating temp file for %s: %v", n.name, err)
+		return nil, fuse.EIO
+	}
+	return &fileWriter{n: n, tmpFile: tmpFile}, nil
+}
+
+func (w *fileWriter) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.tmpFile.Seek(req.Offset, 0); err != nil {
+	}
+
+	if _, err := w.tmpFile.WriteAt(req.Data, req.Offset); err != nil {
+		log.Printf("Error writing %q for write to %q: %v", w.n.name, req.Offset, err)
+		return fuse.EIO
+	}
+
+	return nil
+}
+
+func (w *fileWriter) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	w.mu.Lock()
+	defer func() {
+		w.mu.Unlock()
+
+		err := w.tmpFile.Close()
+		name := w.tmpFile.Name()
+		if err != nil {
+			log.Printf("Error closing %s: %v", name, err)
+		}
+		os.Remove(name)
+	}()
+	// if err := w.tmpFile.Sync(); err != nil {
+	// 	log.Printf("Error syncing %q : %v", w.n.name, err)
+	// 	return fuse.EIO
+	// }
+	fi, err := w.tmpFile.Stat()
+	if err != nil {
+		log.Printf("Error stating %q for write: %v", w.n.name, err)
+		return fuse.EIO
+	}
+	// TODO(gina) dump this size check.  What if there is existing
+	// content in gdrive and we need to truncate it?
+	if fi.Size() != 0 {
+		log.Fatal("TODO(gina) implement file content upload")
+	}
+
+	return nil
 }
 
 var _ fs.HandleReader = (*fileReader)(nil)

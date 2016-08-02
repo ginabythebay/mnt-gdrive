@@ -31,6 +31,29 @@ func (gd *Gdrive) FetchNode(id string) (n *Node, err error) {
 	return n, nil
 }
 
+// CreateNode creates a child file or directory
+func (gd *Gdrive) CreateNode(parentID string, name string, dir bool) (n *Node, err error) {
+	var mimeType string
+	if dir {
+		mimeType = "application/vnd.google-apps.folder"
+	}
+	f, err := gd.svc.Files.Create(&drive.File{
+		Name:     name,
+		Parents:  []string{parentID},
+		MimeType: mimeType}).
+		Fields(fileFields).
+		Do()
+	if err != nil {
+		log.Printf("Unable to create node %q: %v", name, err)
+		return nil, fuse.EIO
+	}
+	n, err = newNode(f.Id, f)
+	if err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
 // FetchChildren returns a slice of children, or an error.
 func (gd *Gdrive) FetchChildren(ctx context.Context, id string) (children []*Node, err error) {
 	handler := func(r *drive.FileList) error {

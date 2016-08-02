@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"path"
 	"testing"
@@ -19,6 +20,20 @@ import (
 
 func init() {
 	fstestutil.DebugByDefault()
+}
+
+func pseudo_uuid() (uuid string) {
+
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		fmt.Println("Error: ", err)
+		return
+	}
+
+	uuid = fmt.Sprintf("%X-%X-%X-%X-%X", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+
+	return
 }
 
 func allNodes() []*gdrive.Node {
@@ -59,6 +74,19 @@ type fakeDrive struct {
 	allNodes []*gdrive.Node
 }
 
+func (fake *fakeDrive) newId() (id string) {
+	idSet := map[string]bool{}
+	for _, n := range fake.allNodes {
+		idSet[n.ID] = true
+	}
+	for {
+		candidate := pseudo_uuid()
+		if _, found := idSet[candidate]; !found {
+			return candidate
+		}
+	}
+}
+
 func (fake *fakeDrive) FetchNode(id string) (n *gdrive.Node, err error) {
 	for _, n := range fake.allNodes {
 		if n.ID == id {
@@ -66,6 +94,16 @@ func (fake *fakeDrive) FetchNode(id string) (n *gdrive.Node, err error) {
 		}
 	}
 	return nil, fuse.ENOENT
+}
+
+func (fake *fakeDrive) CreateNode(parentID string, name string, dir bool) (n *gdrive.Node, err error) {
+	id := fake.newId()
+	if dir {
+		n = makeDir(id, name, parentID)
+	} else {
+		n = makeTextFile(id, name, parentID)
+	}
+	return n, nil
 }
 
 func (fake *fakeDrive) FetchChildren(ctx context.Context, id string) (children []*gdrive.Node, err error) {
@@ -88,13 +126,9 @@ func (fake *fakeDrive) Download(id string, f *os.File) error {
 	return nil
 }
 
-func (fake *fakeDrive) ProcessChanges(changeHandler func(*gdrive.Change) uint32) (uint32, error) {
+func (fake *fakeDrive) ProcessChanges(changeHandler func(*gdrive.Change, *gdrive.ChangeStats)) (gdrive.ChangeStats, error) {
 	log.Fatal("implement me")
-	return 0, fuse.EIO
-}
-
-func mount(mnt *fstestutil.Mount) fs.FS {
-	return newSystem(&fakeDrive{allNodes()}, mnt.Server)
+	return gdrive.ChangeStats{}, fuse.EIO
 }
 
 func neverErr(fi os.FileInfo) error {
@@ -105,7 +139,7 @@ func TestScenario(t *testing.T) {
 	fmt.Print("before mount func thing\n")
 	var sys *system
 	mntFunc := func(mnt *fstestutil.Mount) fs.FS {
-		sys = newSystem(&fakeDrive{allNodes()}, mnt.Server)
+		sys = newSystem(&fakeDrive{allNodes()}, mnt.Server, true)
 		return sys
 	}
 	mnt, err := fstestutil.MountedFuncT(t, mntFunc, nil)
@@ -141,23 +175,27 @@ func TestScenario(t *testing.T) {
 		Removed: false,
 		Node:    makeTextFile("file_three_id", "file three", "dir_two_id"),
 	}
-	sys.processChange(&createFileThreeChange)
+	cs := gdrive.ChangeStats{}
+	verifyChangeStats(t, "init", gdrive.ChangeStats{}, cs)
+	sys.processChange(&createFileThreeChange, &cs)
 	fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
 		"file three": neverErr,
 	})
 	verifyFileContents(t, path.Join(root, "dir two", "file three"), []byte("content for file_three_id"))
+	verifyChangeStats(t, "create", gdrive.ChangeStats{Changed: 1, Ignored: 0}, cs)
 
 	rmFileThreeChange := gdrive.Change{
 		ID:      "file_three_id",
 		Removed: true,
 		Node:    nil,
 	}
-	sys.processChange(&rmFileThreeChange)
+	sys.processChange(&rmFileThreeChange, &cs)
 	fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
 		"file three": neverErr,
 	})
+	verifyChangeStats(t, "create", gdrive.ChangeStats{Changed: 2, Ignored: 0}, cs)
 }
 
 func verifyFileContents(t *testing.T, path string, expected []byte) {
@@ -168,5 +206,11 @@ func verifyFileContents(t *testing.T, path string, expected []byte) {
 	}
 	if !bytes.Equal(found, expected) {
 		t.Errorf("file %q contained %q when we expected %q", path, found, expected)
+	}
+}
+
+func verifyChangeStats(t *testing.T, name string, expected gdrive.ChangeStats, found gdrive.ChangeStats) {
+	if expected != found {
+		t.Errorf("Failed %q.  Expected %#v but found %#v", name, expected, found)
 	}
 }

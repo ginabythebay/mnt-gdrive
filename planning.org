@@ -1,14 +1,17 @@
 
 
 * Things to work on next
-** Testing
-   This will help: https://godoc.org/bazil.org/fuse/fs/fstestutil
 * Things to work on at some point
 ** Investigate inotify support
 See https://github.com/camlistore/camlistore/issues/244
 See https://github.com/bazil/fuse/issues/34
 See https://github.com/rvoicilas/inotify-tools/wiki
-** Bug: in gdrive if I create a test folder with containing to children with the same name, and then ls it, I see both but they appear to have the same inode number.  I see that .dump conains reasonable stuff.  I think this is happening:
+** Bug when 2 files with the same name
+
+   In gdrive if I create a test folder with containing two children
+   with the same name, and then ls it, I see both but they appear to
+   have the same inode number.  I see that .dump conains reasonable
+   stuff.  I think this is happening:
 
    . I return 2 correct direntry elements
    . Lookup gets called twice, based on name only
@@ -45,6 +48,17 @@ See https://github.com/rvoicilas/inotify-tools/wiki
    on.
 ** consider tracking last-viewed time as attr atime
 ** Umm, write mode
+*** writing to new file
+  bug: after creating the file, it does not appear to be in our local cache
+*** writing to existing file
+  Need to start by downloading existing contents
+
+  At the end when we are writing back, do we want to verify that the
+  gdrive file has not changed beneath us?  Maybe we don't care and
+  just do last-one-wins.
+*** settattr  
+*** mv
+*** rm
 ** Can we reduce change notification spam by filtering out fields we don't care about?
 ** Allow live configuration via writing to a magic file?  Could turn on and off logging etc.
 ** Do something useful with file modes

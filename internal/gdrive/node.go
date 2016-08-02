@@ -39,7 +39,6 @@ type Node struct {
 
 // TODO(gina) we probably should not be returning fuse errors,
 // but should translate them in the callers
-
 func newNode(id string, f *drive.File) (*Node, error) {
 	var ctime time.Time
 	ctime, err := time.Parse(time.RFC3339, f.CreatedTime)
