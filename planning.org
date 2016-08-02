@@ -47,6 +47,17 @@ See https://github.com/rvoicilas/inotify-tools/wiki
    them they have a new unique display name they will use from then
    on.
 ** consider tracking last-viewed time as attr atime
+** fileReader open aggressively fetches
+   Currently whenever a file is opened for reading, we begin to
+   download the content in the background immediately.  However, in
+   the case that the kernel has the content in memory, it then just
+   releases the open handle immediately, meaning we consumed network,
+   drive resources without needing to.
+
+   Maybe there is some way to know if the kernel is likely to call
+   release right away and we could not launch the fetch in that case?
+
+   Or maybe I just should not worry about it.
 ** Umm, write mode
 *** handling create calls
   bug: look at truncate flag
