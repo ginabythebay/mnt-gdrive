@@ -34,9 +34,6 @@ func (w *fileWriter) Write(ctx context.Context, req *fuse.WriteRequest, resp *fu
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if _, err := w.tmpFile.Seek(req.Offset, 0); err != nil {
-	}
-
 	if _, err := w.tmpFile.WriteAt(req.Data, req.Offset); err != nil {
 		log.Printf("Error writing %q for write to %q: %v", w.n.name, req.Offset, err)
 		return fuse.EIO
@@ -57,20 +54,7 @@ func (w *fileWriter) Release(ctx context.Context, req *fuse.ReleaseRequest) erro
 		}
 		os.Remove(name)
 	}()
-	// if err := w.tmpFile.Sync(); err != nil {
-	// 	log.Printf("Error syncing %q : %v", w.n.name, err)
-	// 	return fuse.EIO
-	// }
-	fi, err := w.tmpFile.Stat()
-	if err != nil {
-		log.Printf("Error stating %q for write: %v", w.n.name, err)
-		return fuse.EIO
-	}
-	// TODO(gina) dump this size check.  What if there is existing
-	// content in gdrive and we need to truncate it?
-	if fi.Size() != 0 {
-		log.Fatal("TODO(gina) implement file content upload")
-	}
+	err := w.n.gd.Upload(ctx, w.n.id, w.tmpFile)
 
-	return nil
+	return err
 }

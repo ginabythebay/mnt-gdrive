@@ -130,3 +130,19 @@ func (gd *Gdrive) Download(ctx context.Context, id string, f *os.File) error {
 	}
 	return nil
 }
+
+// Upload copies the contents from an os file into a gdrive file
+func (gd *Gdrive) Upload(ctx context.Context, id string, f *os.File) error {
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+	foo, err := ioutil.
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+	_, err := gd.svc.Files.Update(id, &drive.File{}).
+		Context(ctx).
+		Media(f).
+		Do()
+	return err
+}

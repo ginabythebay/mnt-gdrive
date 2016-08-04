@@ -612,7 +612,7 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	case req.Flags.IsReadOnly():
 		res.Flags |= fuse.OpenKeepCache
 		return newFileReader(n), nil
-	case req.Flags&fuse.OpenCreate != 0:
+	case req.Flags&fuse.OpenCreate != 0 && req.Flags&fuse.OpenTruncate != 0:
 		return newFilewWriter(n)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
