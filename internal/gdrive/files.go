@@ -136,7 +136,6 @@ func (gd *Gdrive) Upload(ctx context.Context, id string, f *os.File) error {
 	if _, err := f.Seek(0, 0); err != nil {
 		return err
 	}
-	foo, err := ioutil.
 	if _, err := f.Seek(0, 0); err != nil {
 		return err
 	}

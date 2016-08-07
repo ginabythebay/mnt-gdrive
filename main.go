@@ -591,7 +591,7 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 	resp.Node = fuse.NodeID(created.idx)
 	created.Attr(ctx, &resp.Attr)
 
-	handle, err := newFilewWriter(n)
+	handle, err := newFilewWriter(created)
 	if err != nil {
 		return nil, nil, err
 	}
