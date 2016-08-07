@@ -1,4 +1,4 @@
-
+s
 
 * Things to work on next
 * Things to work on at some point
@@ -58,6 +58,18 @@ See https://github.com/rvoicilas/inotify-tools/wiki
    release right away and we could not launch the fetch in that case?
 
    Or maybe I just should not worry about it.
+** setting file to zero length
+  What I see when I do echo "foo" into bar.txt is that we are called
+  to open bar.txt in write mode, without the truncate flag.  Then we
+  are called to set the length to zero using setAttr.
+
+  Once I start really supporting write, I would be downloading the
+  file contents before returning from the open call (in case the
+  writer wanted to seek or something).
+
+  Maybe do this: if the file is opened in writeonly mode, delay
+  fetching contents until the first write.  If they truncate via
+  setattr before then, we can then skip ever downloading the contents.
 ** Umm, write mode
 *** handling create calls
   bug: look at truncate flag
