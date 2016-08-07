@@ -20,6 +20,7 @@ type DriveLike interface {
 	CreateNode(parentID string, name string, dir bool) (n *Node, err error)
 	FetchChildren(ctx context.Context, id string) (children []*Node, err error)
 	Download(ctx context.Context, id string, f *os.File) error
+	Upload(ctx context.Context, id string, f *os.File) error
 	ProcessChanges(changeHandler func(*Change, *ChangeStats)) (ChangeStats, error)
 }
 

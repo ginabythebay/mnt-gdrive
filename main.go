@@ -591,7 +591,7 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 	resp.Node = fuse.NodeID(created.idx)
 	created.Attr(ctx, &resp.Attr)
 
-	handle, err := newFilewWriter(n)
+	handle, err := newFilewWriter(created)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -612,7 +612,7 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	case req.Flags.IsReadOnly():
 		res.Flags |= fuse.OpenKeepCache
 		return newFileReader(n), nil
-	case req.Flags&fuse.OpenCreate != 0:
+	case req.Flags&fuse.OpenCreate != 0 && req.Flags&fuse.OpenTruncate != 0:
 		return newFilewWriter(n)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)

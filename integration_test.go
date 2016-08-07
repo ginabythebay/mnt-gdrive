@@ -80,6 +80,39 @@ func TestCreateAndClose(t *testing.T) {
 	}
 }
 
+func TestCreateWriteandClose(t *testing.T) {
+	mnt, _ := testMount(t, false)
+	defer func() {
+		mnt.Close()
+	}()
+	root := mnt.Dir
+
+	err := fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+		"file two": neverErr,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fp := path.Join(root, "dir two", "amanda.txt")
+	file, err := os.Create(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.WriteString("written for amanda")
+	file.Close()
+
+	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+		"file two":   neverErr,
+		"amanda.txt": neverErr,
+	})
+	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), []byte("written for amanda"))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestChanges(t *testing.T) {
 	mnt, sys := testMount(t, true)
 	defer func() {

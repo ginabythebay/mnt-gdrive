@@ -3,6 +3,7 @@ package fakedrive
 import (
 	"crypto/rand"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 
@@ -54,11 +55,14 @@ func MakeTextFile(id string, name string, parentID string) *gdrive.Node {
 // Drive represents a fake drive, for integration testing
 type Drive struct {
 	allNodes []*gdrive.Node
+	// Maps from id to the content.  If no entry, we fall back to
+	// calling contentForTextFile
+	contentMap map[string][]byte
 }
 
 // NewDrive returns a new fake drive.
 func NewDrive(allNodes []*gdrive.Node) *Drive {
-	return &Drive{allNodes}
+	return &Drive{allNodes, map[string][]byte{}}
 }
 
 func (fake *Drive) newID() (id string) {
@@ -111,9 +115,23 @@ func (fake *Drive) FetchChildren(ctx context.Context, id string) (children []*gd
 	return children, nil
 }
 
-// Download copies content for our in memory node into a file.
+// Download copies content from our in memory node into a file.
 func (fake *Drive) Download(ctx context.Context, id string, f *os.File) error {
-	f.Write(contentForTextFile(id))
+	content, ok := fake.contentMap[id]
+	if !ok {
+		content = contentForTextFile(id)
+	}
+	f.Write(content)
+	return nil
+}
+
+// Upload copies content for our in memory node from a file.
+func (fake *Drive) Upload(ctx context.Context, id string, f *os.File) error {
+	content, err := ioutil.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	fake.contentMap[id] = content
 	return nil
 }
 
