@@ -98,9 +98,16 @@ func TestCreateWriteandClose(t *testing.T) {
 	file, err := os.Create(fp)
 	if err != nil {
 		t.Fatal(err)
+		return
 	}
-	file.WriteString("written for amanda")
-	file.Close()
+	if _, err := file.WriteString("written for amanda"); err != nil {
+		t.Fatal(err)
+		return
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+		return
+	}
 
 	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
