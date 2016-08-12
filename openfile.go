@@ -84,7 +84,9 @@ func (o *openFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 
 	o.markDirty(true)
 
-	if _, err := o.tmpFile.WriteAt(req.Data, req.Offset); err != nil {
+	var err error
+	resp.Size, err = o.tmpFile.WriteAt(req.Data, req.Offset)
+	if err != nil {
 		log.Printf("Error writing %q for write to %q: %v", o.n.name, req.Offset, err)
 		return fuse.EIO
 	}

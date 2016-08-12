@@ -577,11 +577,13 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 		return nil, nil, fuse.ENOTSUP
 	}
 	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+		log.Printf("Failed to load children of %q: %v", n.id, err)
 		return nil, nil, err
 	}
 	dir := req.Mode&os.ModeDir != 0
 	g, err := n.gd.CreateNode(n.id, req.Name, dir)
 	if err != nil {
+		log.Printf("Failed to create node %q: %v", req.Name, err)
 		return nil, nil, err
 	}
 	n.system.mu.Lock()
@@ -593,6 +595,7 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 
 	handle, err := newOpenFile(created, writeOnly, noFetch)
 	if err != nil {
+		log.Printf("Failed to open file for node %q: %v", created.id, err)
 		return nil, nil, err
 	}
 	return created, handle, nil
