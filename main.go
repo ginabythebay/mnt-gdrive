@@ -577,11 +577,13 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 		return nil, nil, fuse.ENOTSUP
 	}
 	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+		log.Printf("Failed to load children of %q: %v", n.id, err)
 		return nil, nil, err
 	}
 	dir := req.Mode&os.ModeDir != 0
 	g, err := n.gd.CreateNode(n.id, req.Name, dir)
 	if err != nil {
+		log.Printf("Failed to create node %q: %v", req.Name, err)
 		return nil, nil, err
 	}
 	n.system.mu.Lock()
@@ -591,8 +593,9 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 	resp.Node = fuse.NodeID(created.idx)
 	created.Attr(ctx, &resp.Attr)
 
-	handle, err := newFilewWriter(created)
+	handle, err := newOpenFile(created, writeOnly, noFetch)
 	if err != nil {
+		log.Printf("Failed to open file for node %q: %v", created.id, err)
 		return nil, nil, err
 	}
 	return created, handle, nil
@@ -611,9 +614,9 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	switch {
 	case req.Flags.IsReadOnly():
 		res.Flags |= fuse.OpenKeepCache
-		return newFileReader(n), nil
+		return newOpenFile(n, readOnly, proactiveFetch)
 	case req.Flags&fuse.OpenCreate != 0 && req.Flags&fuse.OpenTruncate != 0:
-		return newFilewWriter(n)
+		return newOpenFile(n, writeOnly, noFetch)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}

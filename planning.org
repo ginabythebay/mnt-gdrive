@@ -93,3 +93,13 @@ See https://github.com/rvoicilas/inotify-tools/wiki
 ** Do something useful with file modes
 ** Have some kind of /recent directory with symlinks to the actual nodes
 ** Track last-read-time of nodes, evict old ones to save memory
+** concurrency noodling
+*** file open multiple times by local os, at the same time
+*** file being changed remotely while open locally
+  . while open locally for reading and/or for writing
+*** flush etc
+  . should I be really pushing changes up on every flush?
+* Notes
+** compile-edit-debug cycle
+  run this
+  fusermount -u /tmp/mnt ; go install ;and go test  ./... ;and mnt-gdrive --writeable /tmp/mnt

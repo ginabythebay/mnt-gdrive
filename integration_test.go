@@ -80,37 +80,47 @@ func TestCreateAndClose(t *testing.T) {
 	}
 }
 
-func TestCreateWriteandClose(t *testing.T) {
+func TestCreateWriteAndClose(t *testing.T) {
 	mnt, _ := testMount(t, false)
 	defer func() {
 		mnt.Close()
 	}()
 	root := mnt.Dir
 
-	err := fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	var err error
+	if err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
+	}); err != nil {
+		t.Error(err)
+		return
 	}
 
 	fp := path.Join(root, "dir two", "amanda.txt")
-	file, err := os.Create(fp)
-	if err != nil {
-		t.Fatal(err)
+	var file *os.File
+	if file, err = os.Create(fp); err != nil {
+		t.Error(err)
+		return
 	}
-	file.WriteString("written for amanda")
-	file.Close()
+	var n int
+	if n, err = file.WriteString("written for amanda"); err != nil {
+		t.Errorf("Unexpected response from WriteString.  n=%d, err=%v", n, err)
+		file.Close()
+		return
+	}
+	if err = file.Close(); err != nil {
+		t.Error(err)
+		return
+	}
 
 	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
 		"amanda.txt": neverErr,
 	})
-	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), []byte("written for amanda"))
-
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return
 	}
+	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), []byte("written for amanda"))
 }
 
 func TestChanges(t *testing.T) {
