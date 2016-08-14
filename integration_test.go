@@ -123,6 +123,62 @@ func TestCreateWriteAndClose(t *testing.T) {
 	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), []byte("written for amanda"))
 }
 
+func TestRename(t *testing.T) {
+	mnt, _ := testMount(t, false)
+	defer func() {
+		mnt.Close()
+	}()
+
+	root := mnt.Dir
+	err := fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+		"dir one":  neverErr,
+		"dir two":  neverErr,
+		"file one": neverErr,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// test moving withing the same directory
+	err = os.Rename(path.Join(root, "file one"), path.Join(root, "file one.one"))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+		"dir one":      neverErr,
+		"dir two":      neverErr,
+		"file one.one": neverErr,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// test moving to a new directory
+	err = os.Rename(path.Join(root, "file one.one"), path.Join(root, "dir one", "file one.one"))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+		"dir one": neverErr,
+		"dir two": neverErr,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = fstestutil.CheckDir(path.Join(root, "dir one"), map[string]fstestutil.FileInfoCheck{
+		"file one.one": neverErr,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+}
+
 func TestChanges(t *testing.T) {
 	mnt, sys := testMount(t, true)
 	defer func() {

@@ -135,8 +135,34 @@ func (fake *Drive) Upload(ctx context.Context, id string, f *os.File) error {
 	return nil
 }
 
+func (fake *Drive) Rename(ctx context.Context, id string, newName string, oldParentID string, newParentID string) (n *gdrive.Node, err error) {
+	n, err = fake.FetchNode(id)
+	if err != nil {
+		return nil, err
+	}
+	if newName != "" {
+		n.Name = newName
+	}
+	if oldParentID != "" {
+		if err = reparent(n, oldParentID, newParentID); err != nil {
+			return nil, err
+		}
+	}
+	return n, nil
+}
+
 // ProcessChanges doesn't work yet.
 func (fake *Drive) ProcessChanges(changeHandler func(*gdrive.Change, *gdrive.ChangeStats)) (gdrive.ChangeStats, error) {
 	log.Fatal("implement me")
 	return gdrive.ChangeStats{}, fuse.EIO
+}
+
+func reparent(n *gdrive.Node, oldParentID string, newParentID string) error {
+	for i, id := range n.ParentIDs {
+		if id == oldParentID {
+			n.ParentIDs[i] = newParentID
+			return nil
+		}
+	}
+	return fmt.Errorf("id %q is not a parent of %q", oldParentID, n.ID)
 }

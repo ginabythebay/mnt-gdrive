@@ -482,6 +482,21 @@ func (n *node) haveChildren() bool {
 	return loaded
 }
 
+func (n *node) findChild(name string) (*node, error) {
+	if !n.haveChildren() {
+		panic(fmt.Sprintf("findChild on %q called for %q before loadChildrenIfEmpty was called.  Unable to continue.", n.id, name))
+	}
+
+	n.cmu.Lock()
+	defer n.cmu.Unlock()
+	for _, c := range n.children {
+		if c.name == name {
+			return c, nil
+		}
+	}
+	return nil, fuse.ENOENT
+}
+
 func (n *node) loadChildrenIfEmpty(ctx context.Context) error {
 	if n.haveChildren() {
 		return nil
@@ -557,14 +572,7 @@ func (n *node) Lookup(ctx context.Context, name string) (ret fs.Node, err error)
 		return n.dumpNode, nil
 	}
 
-	n.cmu.Lock()
-	defer n.cmu.Unlock()
-	for _, c := range n.children {
-		if c.name == name {
-			return c, nil
-		}
-	}
-	return nil, fuse.ENOENT
+	return n.findChild(name)
 }
 
 var _ fs.NodeCreater = (*node)(nil)
@@ -620,6 +628,54 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}
+}
+
+var _ fs.NodeRenamer = (*node)(nil)
+
+func (n *node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
+	if n.readonly {
+		log.Print("Rename: failing because readonly")
+		return fuse.ENOTSUP
+	}
+	if !n.dir {
+		log.Print("Rename: failing because not a directory")
+		return fuse.ENOTSUP
+	}
+	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+		log.Printf("Rename: load failed %v", err)
+		return fuse.EIO
+	}
+
+	child, err := n.findChild(req.OldName)
+	if child == nil {
+		log.Printf("Rename: failed because unable to find %q in %q", req.OldName, n.id)
+		return fuse.ENOENT
+	}
+
+	var oldParentID string
+	var newParentID string
+	if newDir != nil {
+		newParent, ok := newDir.(*node)
+		if !ok {
+			log.Printf("*node newDir node isn't a *node, is a %T; can't handle.  returning EIO.", newDir)
+			return fuse.EIO
+		}
+		oldParentID = n.id
+		newParentID = newParent.id
+		if oldParentID == newParentID {
+			oldParentID = ""
+			newParentID = ""
+		}
+	}
+	log.Printf("Renaming %q with newName %q.  oldParentID=%q and newParentID=%q", child.id, req.NewName, oldParentID, newParentID)
+	gnode, err := n.system.gd.Rename(ctx, child.id, req.NewName, oldParentID, newParentID)
+	if err != nil {
+		return err
+	}
+	n.system.mu.Lock()
+	defer n.system.mu.Unlock()
+	child.update(gnode)
+	return nil
 }
 
 type dumpNodeType struct {

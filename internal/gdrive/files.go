@@ -145,3 +145,35 @@ func (gd *Gdrive) Upload(ctx context.Context, id string, f *os.File) error {
 		Do()
 	return err
 }
+
+// Rename changes a files name and/or its parent id.
+func (gd *Gdrive) Rename(ctx context.Context, id string, newName string, oldParentID string, newParentID string) (n *Node, err error) {
+	if (oldParentID == "") != (newParentID == "") {
+		return nil, fmt.Errorf("Either both oldParentId and newParentId must be blank or they both must be non-blank")
+	}
+	if newName == "" && oldParentID == "" {
+		return nil, fmt.Errorf("Either set newName, or the parent ids")
+	}
+	file := &drive.File{}
+	if newName != "" {
+		file.Name = newName
+	}
+	updateCall := gd.svc.Files.Update(id, file).
+		Context(ctx)
+	if oldParentID != "" {
+		updateCall.RemoveParents(oldParentID)
+		updateCall.AddParents(newParentID)
+	}
+	updateCall.Fields(fileFields)
+	file, err = updateCall.Do()
+	if err != nil {
+		log.Printf("Rename Do failed: %v", err)
+		return nil, err
+	}
+	n, err = newNode(file.Id, file)
+	if err != nil {
+		log.Printf("Rename newNode failed: %v", err)
+		return nil, err
+	}
+	return n, nil
+}
