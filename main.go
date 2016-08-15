@@ -678,6 +678,38 @@ func (n *node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.No
 	return nil
 }
 
+var _ fs.NodeRemover = (*node)(nil)
+
+func (n *node) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
+	if n.readonly {
+		log.Print("Rename: failing because readonly")
+		return fuse.ENOTSUP
+	}
+	if !n.dir {
+		log.Print("Rename: failing because not a directory")
+		return fuse.ENOTSUP
+	}
+	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+		log.Printf("Rename: load failed %v", err)
+		return fuse.EIO
+	}
+
+	child, err := n.findChild(req.Name)
+	if child == nil {
+		log.Printf("Remove: failed because unable to find %q in %q", req.Name, n.id)
+		return fuse.ENOENT
+	}
+
+	err = n.system.gd.Trash(ctx, child.id)
+	if err != nil {
+		return err
+	}
+	n.system.mu.Lock()
+	defer n.system.mu.Unlock()
+	n.system.removeNode(child)
+	return nil
+}
+
 type dumpNodeType struct {
 	root *node
 }

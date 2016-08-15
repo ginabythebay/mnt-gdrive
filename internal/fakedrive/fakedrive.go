@@ -135,6 +135,7 @@ func (fake *Drive) Upload(ctx context.Context, id string, f *os.File) error {
 	return nil
 }
 
+// Rename moves and/or renames a node.
 func (fake *Drive) Rename(ctx context.Context, id string, newName string, oldParentID string, newParentID string) (n *gdrive.Node, err error) {
 	n, err = fake.FetchNode(id)
 	if err != nil {
@@ -149,6 +150,18 @@ func (fake *Drive) Rename(ctx context.Context, id string, newName string, oldPar
 		}
 	}
 	return n, nil
+}
+
+// Trash removes the node entry if it exists and the content entry, if it exists.
+func (fake *Drive) Trash(ctx context.Context, id string) error {
+	for i, node := range fake.allNodes {
+		if node.ID == id {
+			fake.allNodes = append(fake.allNodes[:i], fake.allNodes[i+1:]...)
+			break
+		}
+	}
+	delete(fake.contentMap, id)
+	return nil
 }
 
 // ProcessChanges doesn't work yet.

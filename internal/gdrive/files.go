@@ -177,3 +177,15 @@ func (gd *Gdrive) Rename(ctx context.Context, id string, newName string, oldPare
 	}
 	return n, nil
 }
+
+// Trash marks an item as being trashed.
+func (gd *Gdrive) Trash(ctx context.Context, id string) error {
+	_, err := gd.svc.Files.Update(id, &drive.File{Trashed: true}).
+		Context(ctx).
+		Do()
+	if err != nil {
+		log.Printf("Trash failed: %v", err)
+		return err
+	}
+	return nil
+}

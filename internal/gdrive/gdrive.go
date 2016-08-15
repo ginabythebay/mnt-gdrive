@@ -23,6 +23,7 @@ type DriveLike interface {
 	Upload(ctx context.Context, id string, f *os.File) error
 	ProcessChanges(changeHandler func(*Change, *ChangeStats)) (ChangeStats, error)
 	Rename(ctx context.Context, id string, newName string, oldParentID string, newParentID string) (*Node, error)
+	Trash(ctx context.Context, id string) error
 }
 
 // Gdrive corresponds to a google drive connection
