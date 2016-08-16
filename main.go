@@ -35,9 +35,10 @@ const (
 	firstDynamicIdx
 )
 
-// TODO(gina) do something realz here
-const MODE_FILE = 0444
-const MODE_DIR = os.ModeDir | 0555
+const (
+	modeReadOnly  os.FileMode = 0555
+	modeReadWrite os.FileMode = 0777
+)
 
 // TODO(gina) make this configurable
 const changeFetchSleep = time.Duration(5) * time.Second
@@ -466,10 +467,15 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Crtime = n.ctime
 	a.Mtime = n.mtime
 
+	mode := modeReadWrite
+	if n.readonly {
+		mode = modeReadOnly
+	}
+
 	if n.dir {
-		a.Mode = MODE_DIR
+		a.Mode = os.ModeDir | mode
 	} else {
-		a.Mode = MODE_FILE
+		a.Mode = mode
 	}
 
 	return nil
@@ -747,7 +753,7 @@ func (d *dumpNodeType) text() string {
 func (d *dumpNodeType) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = dumpIdx
 	a.Size = uint64(len(d.text()))
-	a.Mode = MODE_FILE
+	a.Mode = modeReadOnly
 
 	d.root.mu.Lock()
 	a.Ctime = d.root.serverStart

@@ -1,4 +1,48 @@
 * Things to work on next
+** gscan2pdf
+  While I can use gscan2pdf to save to a pdf and then use cp to copy
+  that pdf to my drive, I can't save directly into drive (if I do
+  that, it seems to work, but creates a corrupt file that google drive
+  does not recognize as being a pdf at all)
+** coherency
+  Currently if an app opens a file twice, I treat them as completely
+  separate entities.  As a matter of fact, changes to a file (e.g. the
+  size and the mod time) never make it back into the meta data except
+  as polled changes that are implied after I write things back to
+  gdrive.
+
+  Related, doing `echo "foo" > bob.txt` results in:
+    open bob.txt
+    setattr to truncate bob.txt
+    flush open file handle
+    write to open file handle
+    flush open file handle
+    release open file handle
+
+  I need to make sure the truncation gets applied to the open file.  I
+  should also make sure that the attribute changes (e.g. size,
+  modtime) get reflected in my metadata.
+
+  So, I think I need to ensure that there is at most one tmp file per
+  node, no matter how many open calls are outstanding.  When SetAttr
+  is called with a size, forward that to the tmpfile, if the file is
+  open.
+
+  If the file was not open when setattr is called with the size, then
+   open it, apply setattr and flush/close it.
+
+  per-handle fields
+    accessMode
+    fetchMode?
+
+  per openFile fields
+    open handle tracking (so we can clean up when the last handle was released)
+    fetch state
+    tmpFile
+    dirty
+
+  so we add a (often nil) ptr to openFile for each node
+
 * Things to work on at some point
 ** Investigate inotify support
 See https://github.com/camlistore/camlistore/issues/244
@@ -83,7 +127,7 @@ See https://github.com/rvoicilas/inotify-tools/wiki
   just do last-one-wins.
 *** honor flush calls
 *** mkdir
-*** settattr  
+*** settattr
 ** Can we reduce change notification spam by filtering out fields we don't care about?
 ** Allow live configuration via writing to a magic file?  Could turn on and off logging etc.
 ** Do something useful with file modes
