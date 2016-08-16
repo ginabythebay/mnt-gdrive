@@ -611,20 +611,44 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 
 var _ fs.NodeOpener = (*node)(nil)
 
+func xlateAccessMode(flags fuse.OpenFlags) accessMode {
+	switch {
+	case flags.IsReadOnly():
+		return readOnly
+	case flags.IsWriteOnly():
+		return writeOnly
+	default:
+		return readWrite
+	}
+}
+
 func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenResponse) (handle fs.Handle, err error) {
 	if n.dir {
 		// send the caller to ReadDirAll
 		return n, nil
 	}
+	if req.Flags&fuse.OpenExclusive != 0 {
+		// Google drive doesn't support this concept (it is fine
+		// having two files with the same name in the same folder), so
+		// we don't either.
+		log.Print("Open failing due to unsupported exclusive flag")
+		return nil, fuse.ENOTSUP
+	}
+
+	am := xlateAccessMode(req.Flags)
+
+	if am != readOnly && n.readonly {
+		log.Print("Open: failing due to writeable request of readonly filesystem")
+		return nil, fuse.EPERM
+	}
 
 	// TODO(gina) fix up read/write handling
-	// This is pretty borken.  Need to consult readonly config value here
 	switch {
-	case req.Flags.IsReadOnly():
+	case am == readOnly:
 		res.Flags |= fuse.OpenKeepCache
 		return newOpenFile(n, readOnly, proactiveFetch)
-	case req.Flags&fuse.OpenCreate != 0 && req.Flags&fuse.OpenTruncate != 0:
-		return newOpenFile(n, writeOnly, noFetch)
+	case req.Flags&fuse.OpenTruncate != 0:
+		return newOpenFile(n, am, noFetch)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}

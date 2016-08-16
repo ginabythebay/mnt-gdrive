@@ -70,7 +70,6 @@ See https://github.com/rvoicilas/inotify-tools/wiki
   setattr before then, we can then skip ever downloading the contents.
 ** Umm, write mode
 *** handling create calls
-  bug: look at truncate flag
   Need to make open far smarter, and forward create all to it
   consider O_CREAT, O_EXCL, O_TRUNC
   also consider read/write
@@ -83,6 +82,7 @@ See https://github.com/rvoicilas/inotify-tools/wiki
   gdrive file has not changed beneath us?  Maybe we don't care and
   just do last-one-wins.
 *** honor flush calls
+*** mkdir
 *** settattr  
 ** Can we reduce change notification spam by filtering out fields we don't care about?
 ** Allow live configuration via writing to a magic file?  Could turn on and off logging etc.
