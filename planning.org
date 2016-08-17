@@ -4,6 +4,9 @@
   that pdf to my drive, I can't save directly into drive (if I do
   that, it seems to work, but creates a corrupt file that google drive
   does not recognize as being a pdf at all)
+
+  Note that I see it calling getattr after write calls and I keep
+  returning a 0 for the size.  That might be the issue.
 ** coherency
   Currently if an app opens a file twice, I treat them as completely
   separate entities.  As a matter of fact, changes to a file (e.g. the
@@ -36,12 +39,19 @@
     fetchMode?
 
   per openFile fields
-    open handle tracking (so we can clean up when the last handle was released)
     fetch state
     tmpFile
     dirty
 
-  so we add a (often nil) ptr to openFile for each node
+  need to add openFile.flush() which uploads and then marks things no longer dirty
+
+  add openfile.truncate() which can change the length of the file.  Also node.Attr needs to be aware of the current length (even before flushing)
+
+  for node, we will add
+
+  openMu
+  openCount (usually 0)
+  *openFile (usuall nil)
 
 * Things to work on at some point
 ** Investigate inotify support
