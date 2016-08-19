@@ -349,6 +349,7 @@ type node struct {
 	version int64
 	dir     bool
 	parents map[string]*node
+	of      *openFile // FIXME don't check in
 
 	// guards children
 	cmu sync.Mutex
@@ -462,10 +463,21 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	a.Inode = uint64(n.idx)
-	a.Size = n.size
 	a.Ctime = n.ctime
 	a.Crtime = n.ctime
-	a.Mtime = n.mtime
+	log.Printf("in Attr, n.of=%#v", n.of)
+	if n.of == nil {
+		a.Size = n.size
+		a.Mtime = n.mtime
+	} else {
+		fi, err := n.of.tmpFile.Stat()
+		if err != nil {
+			return err
+		}
+		a.Size = uint64(fi.Size())
+		log.Printf("Using open file for size of %d", a.Size)
+		a.Mtime = fi.ModTime()
+	}
 
 	mode := modeReadWrite
 	if n.readonly {
@@ -477,8 +489,12 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	} else {
 		a.Mode = mode
 	}
-
 	return nil
+}
+
+func (n *node) Getattr(ctx context.Context, eq *fuse.GetattrRequest, resp *fuse.GetattrResponse) error {
+	log.Printf("in my Getattr, n=%#v", n)
+	return n.Attr(ctx, &resp.Attr)
 }
 
 func (n *node) haveChildren() bool {
@@ -607,7 +623,7 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 	resp.Node = fuse.NodeID(created.idx)
 	created.Attr(ctx, &resp.Attr)
 
-	handle, err := newOpenFile(created, writeOnly, noFetch)
+	handle, err := created.newOpenFile(writeOnly, noFetch)
 	if err != nil {
 		log.Printf("Failed to open file for node %q: %v", created.id, err)
 		return nil, nil, err
@@ -626,6 +642,18 @@ func xlateAccessMode(flags fuse.OpenFlags) accessMode {
 	default:
 		return readWrite
 	}
+}
+
+// FIXME dont check in
+func (n *node) newOpenFile(am accessMode, fm fetchMode) (fs.Handle, error) {
+	of, err := newOpenFile(n, am, fm)
+	if err == nil {
+		n.mu.Lock()
+		n.of = of
+		n.mu.Unlock()
+	}
+	log.Printf("exiting newOpenfile for %q, of=%#v, err=%v", n.name, of, err)
+	return of, err
 }
 
 func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenResponse) (handle fs.Handle, err error) {
@@ -652,9 +680,9 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	switch {
 	case am == readOnly:
 		res.Flags |= fuse.OpenKeepCache
-		return newOpenFile(n, readOnly, proactiveFetch)
+		return n.newOpenFile(readOnly, proactiveFetch)
 	case req.Flags&fuse.OpenTruncate != 0:
-		return newOpenFile(n, am, noFetch)
+		return n.newOpenFile(am, noFetch)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}

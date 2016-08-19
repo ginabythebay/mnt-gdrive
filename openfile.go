@@ -90,6 +90,11 @@ func (o *openFile) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 		log.Printf("Error writing %q for write to %q: %v", o.n.name, req.Offset, err)
 		return fuse.EIO
 	}
+	err = o.tmpFile.Sync()
+	if err != nil {
+		log.Printf("Error syncing %q for write to %q: %v", o.n.name, req.Offset, err)
+		return fuse.EIO
+	}
 
 	return nil
 }
@@ -116,6 +121,11 @@ func (o *openFile) Release(ctx context.Context, req *fuse.ReleaseRequest) error 
 	if err != nil {
 		log.Printf("Upload of %q/%q failed: %v", o.n.id, o.n.name, err)
 	}
+
+	o.n.mu.Lock()
+	o.n.of = nil
+	o.n.mu.Unlock()
+
 	return err
 }
 
