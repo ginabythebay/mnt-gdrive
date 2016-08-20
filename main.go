@@ -679,14 +679,23 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 		return nil, fuse.EPERM
 	}
 
+	defer func() {
+		if handle != nil && err != nil {
+			h := handle.(fs.HandleReleaser)
+			h.Release(ctx, &fuse.ReleaseRequest{})
+		}
+	}()
 	// TODO(gina) fix up read/write handling
 	switch {
 	case am == phantomfile.ReadOnly:
 		res.Flags |= fuse.OpenKeepCache
 		return n.pf.Open(am, phantomfile.ProactiveFetch)
 	case req.Flags&fuse.OpenTruncate != 0:
-		// FIXME(gina) this is a bug if the file is already open locally.  We need to issue the truncate explicitly.
-		return n.pf.Open(am, phantomfile.NoFetch)
+		handle, err = n.pf.Open(am, phantomfile.NoFetch)
+		if err != nil {
+			err = n.pf.Truncate(ctx, 0)
+		}
+		return handle, err
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}
