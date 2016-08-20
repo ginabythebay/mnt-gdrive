@@ -101,12 +101,37 @@ func TestCreateWriteAndClose(t *testing.T) {
 		t.Error(err)
 		return
 	}
+
+	fi, err := file.Stat()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	size := fi.Size()
+	if size != 0 {
+		t.Errorf("Expected size of 0 but found %d", size)
+		return
+	}
+
 	var n int
 	if n, err = file.WriteString("written for amanda"); err != nil {
 		t.Errorf("Unexpected response from WriteString.  n=%d, err=%v", n, err)
 		file.Close()
 		return
 	}
+
+	fi, err = file.Stat()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	size = fi.Size()
+	expectedSize := int64(len([]byte("written for amanda")))
+	if size != expectedSize {
+		t.Errorf("Expected size of %d but found %d", expectedSize, size)
+		return
+	}
+
 	if err = file.Close(); err != nil {
 		t.Error(err)
 		return
