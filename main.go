@@ -15,6 +15,7 @@ import (
 
 	"github.com/codegangsta/cli"
 	"github.com/ginabythebay/mnt-gdrive/internal/gdrive"
+	"github.com/ginabythebay/mnt-gdrive/internal/phantomfile"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -333,6 +334,7 @@ type node struct {
 	// These are things we expect to be immutable for a node
 	idx index
 	id  string
+	pf  *phantomfile.PhantomFile
 
 	//
 	// These can change while a node exists
@@ -357,7 +359,19 @@ type node struct {
 }
 
 func newNode(s *system, idx index, g *gdrive.Node, parents map[string]*node) *node {
-	return &node{system: s, idx: idx, id: g.ID, name: g.Name, ctime: g.Ctime, mtime: g.Mtime, size: g.Size, version: g.Version, dir: g.Dir(), parents: parents}
+	n := &node{
+		system:  s,
+		idx:     idx,
+		id:      g.ID,
+		name:    g.Name,
+		ctime:   g.Ctime,
+		mtime:   g.Mtime,
+		size:    g.Size,
+		version: g.Version,
+		dir:     g.Dir(),
+		parents: parents}
+	n.pf = phantomfile.NewPhantomFile(n)
+	return n
 }
 
 type printableNode struct {
@@ -458,6 +472,14 @@ func (n *node) removeChild(id string) {
 	n.updateTime = time.Now()
 }
 
+var _ fs.NodeGetattrer = (*node)(nil)
+
+func (n *node) Getattr(ctx context.Context, eq *fuse.GetattrRequest, resp *fuse.GetattrResponse) error {
+	err := n.Attr(ctx, &resp.Attr)
+	log.Printf("in my Getattr, n=%s, size=%d", n, resp.Attr.Size)
+	return err
+}
+
 func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -466,6 +488,12 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Ctime = n.ctime
 	a.Crtime = n.ctime
 	a.Mtime = n.mtime
+
+	size, modTime, ok := n.pf.StatIfLocal()
+	if ok {
+		a.Size = uint64(size)
+		a.Mtime = modTime
+	}
 
 	mode := modeReadWrite
 	if n.readonly {
@@ -583,14 +611,17 @@ func (n *node) Lookup(ctx context.Context, name string) (ret fs.Node, err error)
 
 var _ fs.NodeCreater = (*node)(nil)
 
-func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fuseNode fs.Node, h fs.Handle, err error) {
+	defer func() {
+		log.Printf("main: Create produced %s, %s, %#v", fuseNode, h, err)
+	}()
 	if n.readonly {
 		return nil, nil, fuse.ENOTSUP
 	}
 	if !n.dir {
 		return nil, nil, fuse.ENOTSUP
 	}
-	if err := n.loadChildrenIfEmpty(ctx); err != nil {
+	if err = n.loadChildrenIfEmpty(ctx); err != nil {
 		log.Printf("Failed to load children of %q: %v", n.id, err)
 		return nil, nil, err
 	}
@@ -607,7 +638,7 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 	resp.Node = fuse.NodeID(created.idx)
 	created.Attr(ctx, &resp.Attr)
 
-	handle, err := newOpenFile(created, writeOnly, noFetch)
+	handle, err := created.pf.Open(phantomfile.WriteOnly, phantomfile.NoFetch)
 	if err != nil {
 		log.Printf("Failed to open file for node %q: %v", created.id, err)
 		return nil, nil, err
@@ -617,14 +648,14 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 
 var _ fs.NodeOpener = (*node)(nil)
 
-func xlateAccessMode(flags fuse.OpenFlags) accessMode {
+func xlateAccessMode(flags fuse.OpenFlags) phantomfile.AccessMode {
 	switch {
 	case flags.IsReadOnly():
-		return readOnly
+		return phantomfile.ReadOnly
 	case flags.IsWriteOnly():
-		return writeOnly
+		return phantomfile.WriteOnly
 	default:
-		return readWrite
+		return phantomfile.ReadWrite
 	}
 }
 
@@ -643,18 +674,19 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 
 	am := xlateAccessMode(req.Flags)
 
-	if am != readOnly && n.readonly {
+	if am != phantomfile.ReadOnly && n.readonly {
 		log.Print("Open: failing due to writeable request of readonly filesystem")
 		return nil, fuse.EPERM
 	}
 
 	// TODO(gina) fix up read/write handling
 	switch {
-	case am == readOnly:
+	case am == phantomfile.ReadOnly:
 		res.Flags |= fuse.OpenKeepCache
-		return newOpenFile(n, readOnly, proactiveFetch)
+		return n.pf.Open(am, phantomfile.ProactiveFetch)
 	case req.Flags&fuse.OpenTruncate != 0:
-		return newOpenFile(n, am, noFetch)
+		// FIXME(gina) this is a bug if the file is already open locally.  We need to issue the truncate explicitly.
+		return n.pf.Open(am, phantomfile.NoFetch)
 	default:
 		return nil, fuse.Errno(syscall.EACCES)
 	}
@@ -738,6 +770,29 @@ func (n *node) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	defer n.system.mu.Unlock()
 	n.system.removeNode(child)
 	return nil
+}
+
+var _ phantomfile.DownloaderUploader = (*node)(nil)
+
+func (n *node) Download(ctx context.Context, f *os.File) error {
+	return n.gd.Download(ctx, n.id, f)
+}
+
+func (n *node) Upload(ctx context.Context, f *os.File) error {
+	return n.gd.Upload(ctx, n.id, f)
+}
+
+func (n *node) ID() string {
+	return n.id
+}
+
+func (n *node) Name() string {
+	return n.name
+}
+
+func (n *node) String() string {
+	return fmt.Sprintf("%s/%s", n.id,
+		n.name)
 }
 
 type dumpNodeType struct {

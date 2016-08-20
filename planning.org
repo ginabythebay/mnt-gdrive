@@ -1,4 +1,28 @@
 * Things to work on next
+** refactoring notes
+*** openFile node needs
+  name (for temp file), logging
+  drivelike, for downloading, uploading
+  id, for downloading, uploading, logging
+
+  I think we could introduce some new interface, something like
+  DownloaderUploader, which had a reasonable String() method function
+  for logging, and some way to, maybe, to ask for tempfile prefix?
+
+  Actually, I think we need to ditch the name from this because
+  phantomfile can stick around forever and the name could change
+  underneath it.
+*** file split
+  openfile manages:
+    opencount
+    tmp file
+    upload/download (i.e. dirty tracking)
+    dirty tracking
+  handle manages
+    accessmode
+    
+    phantom
+    
 ** gscan2pdf
   While I can use gscan2pdf to save to a pdf and then use cp to copy
   that pdf to my drive, I can't save directly into drive (if I do
