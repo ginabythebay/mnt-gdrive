@@ -47,7 +47,8 @@ func (h *handle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return fuse.ESTALE
 	}
 	if !h.am.isWriteable() {
-		return fuse.EPERM
+		// This is quite common, apparently
+		return nil
 	}
 	return h.of.flush(ctx)
 }
