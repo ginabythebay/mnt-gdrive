@@ -61,9 +61,9 @@ func (gd *Gdrive) ProcessChanges(changeHandler func(*Change, *ChangeStats)) (Cha
 					log.Printf("Error converting changes %#v: %v", gChange, err)
 					return cs, err
 				}
+				ch := &Change{n.ID, gChange.Removed, n}
+				changeHandler(ch, &cs)
 			}
-			ch := &Change{n.ID, gChange.Removed, n}
-			changeHandler(ch, &cs)
 		}
 		if cl.NewStartPageToken != "" {
 			gd.pageToken = cl.NewStartPageToken
