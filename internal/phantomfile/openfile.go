@@ -56,6 +56,13 @@ func (o *openFile) read(ctx context.Context, req *fuse.ReadRequest, res *fuse.Re
 	return nil
 }
 
+func (o *openFile) stat() (os.FileInfo, error) {
+	if err := o.fetcher.fetch(); err != nil {
+		return nil, fuse.EIO
+	}
+	return o.tmpFile.Stat()
+}
+
 func (o *openFile) write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 	if err := o.fetcher.fetch(); err != nil {
 		log.Printf("Write fetcher error for %q: %v", o.du, err)

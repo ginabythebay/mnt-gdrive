@@ -61,7 +61,7 @@ func (pf *PhantomFile) StatIfLocal() (size int64, modTime time.Time, ok bool) {
 	if pf.of == nil {
 		return size, modTime, false
 	}
-	fi, err := pf.of.tmpFile.Stat()
+	fi, err := pf.of.stat()
 	if err != nil {
 		log.Printf("StatIfLocal for %q failed: %v", pf.of, err)
 		return size, modTime, false
