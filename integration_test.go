@@ -251,6 +251,41 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestMkdir(t *testing.T) {
+	mnt, _ := testMount(t, false)
+	defer func() {
+		mnt.Close()
+	}()
+
+	root := mnt.Dir
+	err := fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+		"dir one":  neverErr,
+		"dir two":  neverErr,
+		"file one": neverErr,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// test moving withing the same directory
+	err = os.Mkdir(path.Join(root, "dir three"), 0700)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+		"dir one":   neverErr,
+		"dir two":   neverErr,
+		"dir three": neverErr,
+		"file one":  neverErr,
+	})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+}
+
 func TestChanges(t *testing.T) {
 	mnt, sys := testMount(t, true)
 	defer func() {

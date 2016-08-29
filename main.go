@@ -509,6 +509,34 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 	return nil
 }
 
+var _ fs.NodeMkdirer = (*node)(nil)
+
+func (n *node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fuseNode fs.Node, err error) {
+	defer func() {
+		log.Printf("main: Mkdir produced %s, %+v", fuseNode, err)
+	}()
+	if n.readonly {
+		return nil, fuse.ENOTSUP
+	}
+	if !n.dir {
+		return nil, fuse.ENOTSUP
+	}
+	if err = n.loadChildrenIfEmpty(ctx); err != nil {
+		log.Printf("Failed to load children of %q: %+v", n.id, err)
+		return nil, err
+	}
+	g, err := n.gd.CreateNode(n.id, req.Name, true)
+	if err != nil {
+		log.Printf("Failed to create node %q: %v", req.Name, err)
+		return nil, err
+	}
+	n.system.mu.Lock()
+	defer n.system.mu.Unlock()
+	created := n.insertNode(g)
+
+	return created, nil
+}
+
 func (n *node) haveChildren() bool {
 	n.cmu.Lock()
 	loaded := n.children != nil
