@@ -329,6 +329,13 @@ func (s *system) insertNode(g *gdrive.Node) *node {
 	return n
 }
 
+var _ fs.NodeCreater = (*node)(nil)
+var _ fs.NodeGetattrer = (*node)(nil)
+var _ fs.NodeMkdirer = (*node)(nil)
+var _ fs.NodeOpener = (*node)(nil)
+var _ fs.NodeRemover = (*node)(nil)
+var _ fs.NodeRenamer = (*node)(nil)
+
 type node struct {
 	*system
 	// These are things we expect to be immutable for a node
@@ -472,8 +479,6 @@ func (n *node) removeChild(id string) {
 	n.updateTime = time.Now()
 }
 
-var _ fs.NodeGetattrer = (*node)(nil)
-
 func (n *node) Getattr(ctx context.Context, eq *fuse.GetattrRequest, resp *fuse.GetattrResponse) error {
 	err := n.Attr(ctx, &resp.Attr)
 	log.Printf("in my Getattr, n=%s, size=%d", n, resp.Attr.Size)
@@ -508,8 +513,6 @@ func (n *node) Attr(ctx context.Context, a *fuse.Attr) error {
 
 	return nil
 }
-
-var _ fs.NodeMkdirer = (*node)(nil)
 
 func (n *node) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fuseNode fs.Node, err error) {
 	defer func() {
@@ -637,8 +640,6 @@ func (n *node) Lookup(ctx context.Context, name string) (ret fs.Node, err error)
 	return n.findChild(name)
 }
 
-var _ fs.NodeCreater = (*node)(nil)
-
 func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fuseNode fs.Node, h fs.Handle, err error) {
 	defer func() {
 		log.Printf("main: Create produced %s, %s, %#v", fuseNode, h, err)
@@ -673,8 +674,6 @@ func (n *node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.C
 	}
 	return created, handle, nil
 }
-
-var _ fs.NodeOpener = (*node)(nil)
 
 func xlateAccessMode(flags fuse.OpenFlags) phantomfile.AccessMode {
 	switch {
@@ -729,8 +728,6 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 	}
 }
 
-var _ fs.NodeRenamer = (*node)(nil)
-
 func (n *node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
 	if n.readonly {
 		log.Print("Rename: failing because readonly")
@@ -776,8 +773,6 @@ func (n *node) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.No
 	child.update(gnode)
 	return nil
 }
-
-var _ fs.NodeRemover = (*node)(nil)
 
 func (n *node) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	if n.readonly {
