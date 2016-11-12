@@ -85,17 +85,16 @@ func (o *openFile) release(ctx context.Context) error {
 	log.Printf("openFile: releasing %q", o.du)
 	o.fetcher.abort()
 
-	var err error
 	name := o.tmpFile.Name()
-	if closeErr := o.tmpFile.Close(); closeErr != nil {
-		log.Printf("Error closing %s: %v", name, closeErr)
-		return closeErr
+	if err := o.tmpFile.Close(); err != nil {
+		log.Printf("Error closing %s: %v", name, err)
+		return err
 	}
-	if rmErr := os.Remove(name); rmErr != nil {
-		log.Printf("Error removing %s: %v", name, rmErr)
-		return rmErr
+	if err := os.Remove(name); err != nil {
+		log.Printf("Error removing %s: %v", name, err)
+		return err
 	}
-	return err
+	return nil
 }
 
 func (o *openFile) truncate(size int64) error {

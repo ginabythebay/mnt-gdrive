@@ -724,6 +724,7 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 		}
 		return handle, err
 	default:
+		log.Printf("Denying open due to unsupported flags for %q, am=%d, flags=%s", n.name, am, req.Flags)
 		return nil, fuse.Errno(syscall.EACCES)
 	}
 }

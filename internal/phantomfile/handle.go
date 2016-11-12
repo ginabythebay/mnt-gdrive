@@ -89,9 +89,14 @@ func (h *handle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	}
 	err := h.pf.release(ctx)
 	if flushErr != nil {
+		log.Printf("Handle Release flush error %q: %+v", h.pf.du, flushErr)
 		return flushErr
 	}
-	return err
+	if err != nil {
+		log.Printf("Handle Release pf release error %q: %+v", h.pf.du, err)
+		return err
+	}
+	return nil
 }
 
 func (h *handle) String() string {

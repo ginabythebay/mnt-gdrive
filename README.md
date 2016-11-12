@@ -2,11 +2,34 @@
 
 [![Build Status](https://travis-ci.org/ginabythebay/mnt-gdrive.svg?branch=master)](https://travis-ci.org/ginabythebay/mnt-gdrive)
 
-Allows you to mount google drive via FUSE.  Readonly for now.  Probably has lots of wierd dangerous bugs.
+Allows you to mount google drive via FUSE.  Probably has lots of wierd dangerous bugs.
 
 It has only been tested on Linux.  If you want local access to your google drive files on a Mac,  I suggest using the [google provided solution](https://tools.google.com/dlpage/drive).
 
 Right now, it excludes all files not owned by you.  I expect to make that a command line option in the future.
+
+## Status
+
+There is a pretty good chance that running this code will make you
+lose data in your google drive.
+
+It is probably safest if you run it in readonly mode (the default),
+but even then, I could imagine bad things happening.
+
+This project is a chance for me to scratch an itch and is also a
+chance for me to learn about some things I was not very familiar with.
+Even now, I would not describe myself as being expert at go, expert at
+file systems, or expert at fuse file systems.
+
+I have started using this in write mode against my personal google
+drive, as part of my workflow that centers around managing an
+ever-growing set of pdfs (1,636 and counting).
+
+As I run across bugs, I am fixing them, but I don't have plans to make
+large changes right now.  If you run across something you want me to
+look at, create an
+[issue](https://github.com/ginabythebay/mnt-gdrive/issues) and I will
+see what I can do.
 
 ## Getting Started
 
@@ -78,7 +101,7 @@ to do dynamically change e.g. logging behavior.
 
 ## Links
 
-  * [planning.org](planning.org) contains a semi-truthful plan
+  * [planning.org](planning.org) contains a semi-truthful plan and random notes
   * [Bazil FUSE](https://bazil.org/fuse/) is a library we leverage
     heavily
   * [Google Drive
