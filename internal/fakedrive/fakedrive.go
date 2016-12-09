@@ -121,16 +121,21 @@ func (fake *Drive) Download(ctx context.Context, id string, f *os.File) error {
 	if !ok {
 		content = contentForTextFile(id)
 	}
+	fmt.Printf(":: fake downloading %q for %q\n", content, id)
 	f.Write(content)
 	return nil
 }
 
 // Upload copies content for our in memory node from a file.
 func (fake *Drive) Upload(ctx context.Context, id string, f *os.File) error {
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
 	content, err := ioutil.ReadAll(f)
 	if err != nil {
 		return err
 	}
+	fmt.Printf(":: fake uploading %q to %q\n", content, id)
 	fake.contentMap[id] = content
 	return nil
 }

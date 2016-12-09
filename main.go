@@ -712,7 +712,7 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 			h.Release(ctx, &fuse.ReleaseRequest{})
 		}
 	}()
-	// TODO(gina) fix up read/write handling
+
 	switch {
 	case am == phantomfile.ReadOnly:
 		res.Flags |= fuse.OpenKeepCache
@@ -723,6 +723,8 @@ func (n *node) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenRe
 			err = n.pf.Truncate(ctx, 0)
 		}
 		return handle, err
+	case am == phantomfile.ReadWrite:
+		return n.pf.Open(am, phantomfile.ProactiveFetch)
 	default:
 		log.Printf("Denying open due to unsupported flags for %q, am=%d, flags=%s", n.name, am, req.Flags)
 		return nil, fuse.Errno(syscall.EACCES)

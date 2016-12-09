@@ -109,6 +109,45 @@ func TestCreateWriteAndClose(t *testing.T) {
 	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), "written for amanda")
 }
 
+// TestReadWrite tests the case where we open a file in read-write mode
+func TestReadWrite(t *testing.T) {
+	mnt, _ := testMount(t, false)
+	defer func() {
+		mnt.Close()
+	}()
+	root := mnt.Dir
+
+	fn := path.Join(root, "file one")
+
+	verifyFileContents(t, fn, "content for file_one_id")
+
+	f1, err := os.OpenFile(fn, os.O_RDWR, 0777)
+	defer close(f1)
+	ok(t, err)
+	verifyContents(t, f1, "content for file_one_id")
+
+	f2, err := os.OpenFile(fn, os.O_RDWR, 0777)
+	defer close(f2)
+	ok(t, err)
+	verifyContents(t, f2, "content for file_one_id")
+
+	// write through f2 without closing
+	replaceContents(t, f2, "file_one_id written through f2")
+	verifyContents(t, f2, "file_one_id written through f2")
+
+	// after closing f2, the change is visible
+	ok(t, f2.Close())
+	verifyFileContents(t, fn, "file_one_id written through f2")
+
+	// write through f1 without closing
+	replaceContents(t, f1, "file_one_id written through f1")
+	verifyContents(t, f1, "file_one_id written through f1")
+
+	// after closing f1, its change is the last one, wins
+	ok(t, f1.Close())
+	verifyFileContents(t, fn, "file_one_id written through f1")
+}
+
 func TestRename(t *testing.T) {
 	mnt, _ := testMount(t, false)
 	defer func() {
@@ -242,9 +281,47 @@ func TestChanges(t *testing.T) {
 }
 
 func verifyFileContents(t *testing.T, path string, expected string) {
-	found, err := ioutil.ReadFile(path)
+	b, err := ioutil.ReadFile(path)
 	ok(t, err)
-	equals(t, []byte(expected), found)
+	found := string(b)
+	if expected != found {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n", filepath.Base(file), line, expected, found)
+		t.FailNow()
+	}
+}
+
+func verifyContents(t *testing.T, f *os.File, expected string) {
+	// find the current offset, which we can restore later
+	offset, err := f.Seek(0, 1)
+	ok(t, err)
+
+	_, err = f.Seek(0, 0)
+	ok(t, err)
+	b, err := ioutil.ReadAll(f)
+	ok(t, err)
+	found := string(b)
+	if expected != found {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n", filepath.Base(file), line, expected, found)
+		t.FailNow()
+	}
+
+	// restore offset
+	_, err = f.Seek(offset, 0)
+	ok(t, err)
+}
+
+func replaceContents(t *testing.T, f *os.File, contents string) {
+	offset, err := f.Seek(0, 0)
+	ok(t, err)
+	equals(t, int64(0), offset)
+	ok(t, f.Truncate(0))
+
+	data := []byte(contents)
+	n, err := f.Write(data)
+	ok(t, err)
+	equals(t, len(data), n)
 }
 
 // assert fails the test if the condition is false.
