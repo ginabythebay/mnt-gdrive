@@ -106,7 +106,7 @@ func TestCreateWriteAndClose(t *testing.T) {
 		"file two":   neverErr,
 		"amanda.txt": neverErr,
 	}))
-	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), []byte("written for amanda"))
+	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), "written for amanda")
 }
 
 func TestRename(t *testing.T) {
@@ -211,8 +211,8 @@ func TestChanges(t *testing.T) {
 		"file two": neverErr,
 	}))
 
-	verifyFileContents(t, path.Join(root, "file one"), []byte("content for file_one_id"))
-	verifyFileContents(t, path.Join(root, "dir two", "file two"), []byte("content for file_two_id"))
+	verifyFileContents(t, path.Join(root, "file one"), "content for file_one_id")
+	verifyFileContents(t, path.Join(root, "dir two", "file two"), "content for file_two_id")
 
 	createFileThreeChange := gdrive.Change{
 		ID:      "file_three_id",
@@ -226,7 +226,7 @@ func TestChanges(t *testing.T) {
 		"file two":   neverErr,
 		"file three": neverErr,
 	}))
-	verifyFileContents(t, path.Join(root, "dir two", "file three"), []byte("content for file_three_id"))
+	verifyFileContents(t, path.Join(root, "dir two", "file three"), "content for file_three_id")
 	equals(t, gdrive.ChangeStats{Changed: 1, Ignored: 0}, cs)
 
 	rmFileThreeChange := gdrive.Change{
@@ -241,10 +241,10 @@ func TestChanges(t *testing.T) {
 	equals(t, gdrive.ChangeStats{Changed: 2, Ignored: 0}, cs)
 }
 
-func verifyFileContents(t *testing.T, path string, expected []byte) {
+func verifyFileContents(t *testing.T, path string, expected string) {
 	found, err := ioutil.ReadFile(path)
 	ok(t, err)
-	equals(t, expected, found)
+	equals(t, []byte(expected), found)
 }
 
 // assert fails the test if the condition is false.
