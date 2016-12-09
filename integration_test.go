@@ -1,11 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
+	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/ginabythebay/mnt-gdrive/internal/fakedrive"
@@ -40,12 +42,8 @@ func testMount(t *testing.T, readonly bool) (*fstestutil.Mount, *system) {
 		return sys
 	}
 	mnt, err := fstestutil.MountedFuncT(t, mntFunc, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mnt == nil {
-		t.Fatal("nil mnt")
-	}
+	ok(t, err)
+	assert(t, mnt != nil, "nil mnt")
 
 	return mnt, sys
 }
@@ -57,27 +55,20 @@ func TestCreateAndClose(t *testing.T) {
 	}()
 	root := mnt.Dir
 
-	err := fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	fp := path.Join(root, "dir two", "amanda.txt")
 	file, err := os.Create(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	defer close(file)
+	ok(t, err)
 	file.Close()
 
-	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
 		"amanda.txt": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}))
 }
 
 func TestCreateWriteAndClose(t *testing.T) {
@@ -87,64 +78,34 @@ func TestCreateWriteAndClose(t *testing.T) {
 	}()
 	root := mnt.Dir
 
-	var err error
-	if err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two": neverErr,
-	}); err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 
+	var err error
 	fp := path.Join(root, "dir two", "amanda.txt")
 	var file *os.File
-	if file, err = os.Create(fp); err != nil {
-		t.Error(err)
-		return
-	}
+	file, err = os.Create(fp)
+	defer close(file)
+	ok(t, err)
 
 	fi, err := file.Stat()
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	size := fi.Size()
-	if size != 0 {
-		t.Errorf("Expected size of 0 but found %d", size)
-		return
-	}
+	ok(t, err)
+	equals(t, int64(0), fi.Size())
 
-	var n int
-	if n, err = file.WriteString("written for amanda"); err != nil {
-		t.Errorf("Unexpected response from WriteString.  n=%d, err=%v", n, err)
-		file.Close()
-		return
-	}
+	_, err = file.WriteString("written for amanda")
+	ok(t, err)
 
 	fi, err = file.Stat()
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	size = fi.Size()
-	expectedSize := int64(len([]byte("written for amanda")))
-	if size != expectedSize {
-		t.Errorf("Expected size of %d but found %d", expectedSize, size)
-		return
-	}
+	ok(t, err)
+	equals(t, int64(len([]byte("written for amanda"))), fi.Size())
 
-	if err = file.Close(); err != nil {
-		t.Error(err)
-		return
-	}
+	ok(t, file.Close())
 
-	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
 		"amanda.txt": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 	verifyFileContents(t, path.Join(root, "dir two", "amanda.txt"), []byte("written for amanda"))
 }
 
@@ -155,53 +116,29 @@ func TestRename(t *testing.T) {
 	}()
 
 	root := mnt.Dir
-	err := fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one":  neverErr,
 		"dir two":  neverErr,
 		"file one": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 
 	// test moving withing the same directory
-	err = os.Rename(path.Join(root, "file one"), path.Join(root, "file one.one"))
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, os.Rename(path.Join(root, "file one"), path.Join(root, "file one.one")))
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one":      neverErr,
 		"dir two":      neverErr,
 		"file one.one": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 
 	// test moving to a new directory
-	err = os.Rename(path.Join(root, "file one.one"), path.Join(root, "dir one", "file one.one"))
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, os.Rename(path.Join(root, "file one.one"), path.Join(root, "dir one", "file one.one")))
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one": neverErr,
 		"dir two": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = fstestutil.CheckDir(path.Join(root, "dir one"), map[string]fstestutil.FileInfoCheck{
+	}))
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir one"), map[string]fstestutil.FileInfoCheck{
 		"file one.one": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 }
 
 func TestRemove(t *testing.T) {
@@ -211,44 +148,24 @@ func TestRemove(t *testing.T) {
 	}()
 
 	root := mnt.Dir
-	err := fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one":  neverErr,
 		"dir two":  neverErr,
 		"file one": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 
 	// test moving withing the same directory
-	err = os.Remove(path.Join(root, "file one"))
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, os.Remove(path.Join(root, "file one")))
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one": neverErr,
 		"dir two": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 
 	// test moving withing the same directory
-	err = os.Remove(path.Join(root, "dir one"))
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, os.Remove(path.Join(root, "dir one")))
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir two": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 }
 
 func TestMkdir(t *testing.T) {
@@ -258,32 +175,20 @@ func TestMkdir(t *testing.T) {
 	}()
 
 	root := mnt.Dir
-	err := fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one":  neverErr,
 		"dir two":  neverErr,
 		"file one": neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 
 	// test moving withing the same directory
-	err = os.Mkdir(path.Join(root, "dir three"), 0700)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, os.Mkdir(path.Join(root, "dir three"), 0700))
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one":   neverErr,
 		"dir two":   neverErr,
 		"dir three": neverErr,
 		"file one":  neverErr,
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	}))
 }
 
 func TestChanges(t *testing.T) {
@@ -294,26 +199,17 @@ func TestChanges(t *testing.T) {
 
 	fmt.Print("before root check\n")
 	root := mnt.Dir
-	err := fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(root, map[string]fstestutil.FileInfoCheck{
 		"dir one":  neverErr,
 		"dir two":  neverErr,
 		"file one": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}))
 
-	err = fstestutil.CheckDir(path.Join(root, "dir one"), map[string]fstestutil.FileInfoCheck{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir one"), map[string]fstestutil.FileInfoCheck{}))
 
-	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	verifyFileContents(t, path.Join(root, "file one"), []byte("content for file_one_id"))
 	verifyFileContents(t, path.Join(root, "dir two", "file two"), []byte("content for file_two_id"))
@@ -324,17 +220,14 @@ func TestChanges(t *testing.T) {
 		Node:    fakedrive.MakeTextFile("file_three_id", "file three", "dir_two_id"),
 	}
 	cs := gdrive.ChangeStats{}
-	verifyChangeStats(t, "init", gdrive.ChangeStats{}, cs)
+	equals(t, gdrive.ChangeStats{}, cs)
 	sys.processChange(&createFileThreeChange, &cs)
-	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two":   neverErr,
 		"file three": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	}))
 	verifyFileContents(t, path.Join(root, "dir two", "file three"), []byte("content for file_three_id"))
-	verifyChangeStats(t, "create", gdrive.ChangeStats{Changed: 1, Ignored: 0}, cs)
+	equals(t, gdrive.ChangeStats{Changed: 1, Ignored: 0}, cs)
 
 	rmFileThreeChange := gdrive.Change{
 		ID:      "file_three_id",
@@ -342,28 +235,49 @@ func TestChanges(t *testing.T) {
 		Node:    nil,
 	}
 	sys.processChange(&rmFileThreeChange, &cs)
-	err = fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
+	ok(t, fstestutil.CheckDir(path.Join(root, "dir two"), map[string]fstestutil.FileInfoCheck{
 		"file two": neverErr,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	verifyChangeStats(t, "create", gdrive.ChangeStats{Changed: 2, Ignored: 0}, cs)
+	}))
+	equals(t, gdrive.ChangeStats{Changed: 2, Ignored: 0}, cs)
 }
 
 func verifyFileContents(t *testing.T, path string, expected []byte) {
 	found, err := ioutil.ReadFile(path)
-	if err != nil {
-		t.Errorf("Error reading %q: %v", path, err)
-		return
-	}
-	if !bytes.Equal(found, expected) {
-		t.Errorf("file %q contained %q when we expected %q", path, found, expected)
+	ok(t, err)
+	equals(t, expected, found)
+}
+
+// assert fails the test if the condition is false.
+func assert(tb testing.TB, condition bool, msg string, v ...interface{}) {
+	if !condition {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Printf("\033[31m%s:%d: "+msg+"\033[39m\n\n", append([]interface{}{filepath.Base(file), line}, v...)...)
+		tb.FailNow()
 	}
 }
 
-func verifyChangeStats(t *testing.T, name string, expected gdrive.ChangeStats, found gdrive.ChangeStats) {
-	if expected != found {
-		t.Errorf("Failed %q.  Expected %#v but found %#v", name, expected, found)
+// ok fails the test if an err is not nil.
+func ok(tb testing.TB, err error) {
+	if err != nil {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Printf("\033[31m%s:%d: unexpected error: %s\033[39m\n\n", filepath.Base(file), line, err.Error())
+		tb.FailNow()
 	}
+}
+
+// equals fails the test if exp is not equal to act.
+func equals(tb testing.TB, exp, act interface{}) {
+	if !reflect.DeepEqual(exp, act) {
+		_, file, line, _ := runtime.Caller(1)
+		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n", filepath.Base(file), line, exp, act)
+		tb.FailNow()
+	}
+}
+
+// close is meant to be called in defer, after opening a file.
+// Necessary in the case where a test fails early with a
+// FailNow.  If the test ran successfully than this will be a
+// duplicate call that will return syscall.EINVAL, which we ignore
+func close(f *os.File) {
+	f.Close()
 }
