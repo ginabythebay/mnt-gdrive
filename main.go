@@ -53,7 +53,7 @@ func main() {
 	sigChan := make(chan os.Signal)
 	go func() {
 		stacktrace := make([]byte, 8192)
-		for _ = range sigChan {
+		for range sigChan {
 			length := runtime.Stack(stacktrace, true)
 			fmt.Println(string(stacktrace[:length]))
 		}
