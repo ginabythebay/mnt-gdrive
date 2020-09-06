@@ -7,7 +7,7 @@ before_install:
   - sudo chown root:$USER /etc/fuse.conf
 language: go
 go:
-  - 1.7.1
+  - 1.15.1
   - tip
 script:
   - go install

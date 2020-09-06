@@ -55,7 +55,7 @@ func (pf *PhantomFile) StatIfLocal() (size int64, modTime time.Time, ok bool) {
 	pf.mu.Lock()
 	defer pf.mu.Unlock()
 	defer func() {
-		log.Printf("StatIfLocal: of nil=%t, size=%d, modTime=%d, ok=%t",
+		log.Printf("StatIfLocal: of nil=%t, size=%d, modTime=%q, ok=%t",
 			pf.of == nil, size, modTime, ok)
 	}()
 	if pf.of == nil {

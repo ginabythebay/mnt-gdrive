@@ -38,6 +38,10 @@ func newOpenFile(du DownloaderUploader, fm FetchMode) (fr *openFile, err error) 
 	return fr, nil
 }
 
+func (o *openFile) String() string {
+	return o.tmpFile.Name()
+}
+
 func (o *openFile) read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
 	if err := o.fetcher.fetch(); err != nil {
 		return fuse.EIO
