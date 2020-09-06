@@ -32,10 +32,12 @@ type PhantomFile struct {
 	of          *openFile
 }
 
+// NewPhantomFile creates a PhantomFile
 func NewPhantomFile(du DownloaderUploader) *PhantomFile {
 	return &PhantomFile{du: du}
 }
 
+// Open opens the associated file
 func (pf *PhantomFile) Open(am AccessMode, fm FetchMode) (*handle, error) {
 	pf.mu.Lock()
 	defer pf.mu.Unlock()
@@ -51,6 +53,7 @@ func (pf *PhantomFile) Open(am AccessMode, fm FetchMode) (*handle, error) {
 	return newHandle(pf, am), nil
 }
 
+// StatIfLocal runs a stat on the associated file if local.  Otherwise it returns cached stat values.
 func (pf *PhantomFile) StatIfLocal() (size int64, modTime time.Time, ok bool) {
 	pf.mu.Lock()
 	defer pf.mu.Unlock()
@@ -70,6 +73,7 @@ func (pf *PhantomFile) StatIfLocal() (size int64, modTime time.Time, ok bool) {
 	return fi.Size(), fi.ModTime(), true
 }
 
+// Truncate truncates the associated file.
 func (pf *PhantomFile) Truncate(ctx context.Context, size int64) error {
 	var fm FetchMode
 	if size == 0 {
@@ -101,6 +105,7 @@ func (pf *PhantomFile) release(ctx context.Context) error {
 	return err
 }
 
+// Fetch modes
 const (
 	ProactiveFetch FetchMode = iota
 	FetchAsNeeded
@@ -124,6 +129,7 @@ func (fm FetchMode) String() string {
 	}
 }
 
+// Open modes
 const (
 	ReadOnly  AccessMode = syscall.O_RDONLY
 	WriteOnly AccessMode = syscall.O_WRONLY
