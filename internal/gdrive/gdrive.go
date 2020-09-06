@@ -2,6 +2,7 @@ package gdrive
 
 import (
 	"fmt"
+	"google.golang.org/api/option"
 	"io/ioutil"
 	"os"
 	"os/user"
@@ -64,7 +65,7 @@ func GetService(readonly bool) (DriveLike, error) {
 	}
 	client := getClient(ctx, config)
 
-	svc, err := drive.New(client)
+	svc, err := drive.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, err
 	}
